@@ -28,6 +28,7 @@ Connector lets you organise remote sessions into folders, store credentials secu
   - [Folders and Organisation](#folders-and-organisation)
   - [Quick Connect](#quick-connect)
   - [Settings](#settings)
+  - [Import and Export](#import-and-export)
 - [Running in Production](#running-in-production)
 - [Development](#development)
   - [Manual Setup](#manual-setup)
@@ -45,7 +46,9 @@ Connector lets you organise remote sessions into folders, store credentials secu
 - **Encrypted storage** -- all credentials (passwords, key paths) encrypted at rest with Fernet (AES-128-CBC + HMAC)
 - **Native terminal launch** -- opens sessions in your OS terminal (Terminal.app, iTerm, GNOME Terminal, Windows Terminal, and more)
 - **SFTP file browser** -- browse, upload, and download files through the web UI (SSH sessions)
-- **Folder organisation** -- group sessions into collapsible, drag-and-drop folders
+- **Hierarchical folders** -- group sessions into collapsible, drag-and-drop folders with arbitrary subfolder nesting (path-based hierarchy, e.g. `AWS/Production`)
+- **Import / Export** -- export all sessions and folder structure to a portable JSON file (credentials stripped); import merges folders and deduplicates sessions
+- **SSH key file browser** -- native OS file dialog (macOS AppleScript, Linux zenity/kdialog) for selecting SSH key files directly from the session form
 - **Quick connect** -- one-shot `user@host:port` connections from the top bar
 - **Password auto-login** -- uses `sshpass` when available to pass stored SSH passwords automatically
 - **Dynamic forms** -- the session form adapts its fields to the selected protocol (hostname/port for network protocols, serial port/baud for serial, nothing for local shell)
@@ -185,13 +188,13 @@ connector/
 │
 └── tests/
     ├── conftest.py              # Shared fixtures (app, client, crypto, storage)
-    ├── test_site.py             # Site model (10 tests)
+    ├── test_site.py             # Site model (21 tests)
     ├── test_crypto_service.py   # Encryption layer (11 tests)
     ├── test_storage.py          # Storage CRUD (13 tests)
     ├── test_settings_service.py # Settings service (7 tests)
-    ├── test_terminal_service.py # Platform detection + SSH commands (12 tests)
-    ├── test_routes.py           # Flask route integration (19 tests)
-    └── test_folders.py          # Folder management (36 tests)
+    ├── test_terminal_service.py # Platform detection + protocol commands (23 tests)
+    ├── test_routes.py           # Flask route integration (59 tests)
+    └── test_folders.py          # Folder + subfolder management (54 tests)
 ```
 
 ### Component Diagram
@@ -214,15 +217,17 @@ connector/
 |   |                   |  |  connections.py)  |  |  settings.py)     |  |
 |   | / (dashboard)     |  |                  |  |                   |  |
 |   | /sites/new        |  | /quick-connect   |  | /settings         |  |
-|   | /sites/<id>/edit  |  | /sites/<id>/ssh  |  +-------------------+  |
-|   | /sites/<id>/dup   |  | /sites/<id>/sftp |                        |
+|   | /sites/<id>/edit  |  | /sites/<id>/ssh  |  | /settings/export  |  |
+|   | /sites/<id>/dup   |  | /sites/<id>/sftp |  | /settings/import  |  |
 |   | /sites/<id>/del   |  | /sites/<id>/sftp |  +-------------------+  |
-|   +-------------------+  |  /download|upload|  |   folders_bp      |  |
-|                          +------------------+  | (routes/          |  |
-|                                                |  folders.py)      |  |
-|   Context Processor (inject_sidebar)           |                   |  |
-|   -> sidebar_sites, sidebar_folders,           | /folders/create   |  |
-|      active_site, platform_info                | /folders/rename   |  |
+|   | /api/browse-key   |  |  /download|upload|                        |
+|   +-------------------+  +------------------+  +-------------------+  |
+|                                                |   folders_bp      |  |
+|   Context Processor (inject_sidebar)           | (routes/          |  |
+|   -> sidebar_sites, sidebar_folders,           |  folders.py)      |  |
+|      sidebar_folder_tree, active_site,         |                   |  |
+|      platform_info                             | /folders/create   |  |
+|                                                | /folders/rename   |  |
 |                                                | /folders/delete   |  |
 |                                                | /folders/move     |  |
 |                                                | /folders/reorder  |  |
@@ -234,7 +239,7 @@ connector/
 | SiteStorage   |  |  SSHService      |  |  TerminalService        |
 | (storage.py)  |  |  (ssh_service.py)|  |  (terminal_service.py)  |
 |               |  |                  |  |                         |
-| list_sites()  |  | connect()        |  | launch_ssh()            |
+| list_sites()  |  | connect()        |  | launch_session()        |
 | get_site()    |  | execute()        |  | detect_platform()       |
 | create_site() |  | sftp_list()      |  |                         |
 | update_site() |  | sftp_download()  |  | macOS: AppleScript      |
@@ -366,7 +371,8 @@ Click any session in the sidebar to select it. The URL updates to `/?site=<id>`.
    | **Telnet** | Hostname, Port, Username, Notes, Folder |
    | **Serial** | Serial Port (e.g. `/dev/ttyUSB0`), Baud Rate, Notes, Folder |
 
-4. Click **Create**.
+4. For SSH sessions with **SSH Key** auth, click the **Browse** button to open a native OS file dialog (starts in `~/.ssh`). On macOS this uses AppleScript; on Linux it uses zenity or kdialog.
+5. Click **Create**.
 
 To edit an existing session, select it and click the pencil icon, or navigate to `/sites/<id>/edit`.
 
@@ -432,9 +438,15 @@ SFTP connections use Paramiko and require valid credentials (password or key) st
 **Create a folder:**
 - Click the "New Folder" button at the bottom of the sidebar, or use the `/folders/create` API.
 
+**Create subfolders:**
+- Hover over a folder header and click the subfolder icon to create a nested folder.
+- Alternatively, create a folder with a path like `AWS/Production` -- intermediate parents are auto-created.
+- Subfolders can be nested to arbitrary depth.
+
 **Rename or delete a folder:**
 - Hover over a folder header in the sidebar to reveal the rename and delete action buttons.
-- Deleting a folder moves its sessions back to the root level.
+- Renaming a parent folder cascades to all descendant subfolder paths and updates assigned sessions.
+- Deleting a folder removes all its descendant subfolders and moves their sessions back to the root level.
 
 **Move sessions into folders:**
 - Drag a session and drop it onto a folder header. The sidebar updates immediately.
@@ -464,6 +476,21 @@ Navigate to `/settings` (or click the gear icon in the sidebar toolbar) to confi
 - **Connection Defaults** -- default SSH port, username, auth type, and key path applied when creating new sessions
 - **Timeouts** -- SSH connection timeout (1-300s) and command execution timeout (1-600s)
 - **Platform Info** (read-only) -- detected OS, terminal application, and `sshpass` status
+
+### Import and Export
+
+The Settings page includes an Import/Export section for migrating sessions between Connector instances.
+
+**Exporting:**
+1. Navigate to `/settings` and click the **Export** button.
+2. A JSON file downloads with the naming pattern `connector_export_YYYYMMDD_HHMMSS.json`.
+3. The export includes all sessions and folder structure. **Credentials (passwords and key paths) are stripped** for security.
+
+**Importing:**
+1. On the Settings page, use the file upload field in the Import section and click **Import**.
+2. Connector validates the file format (must contain `connector_export: true`).
+3. Folders are merged (no duplicates created). Sessions are deduplicated by `(name, hostname, protocol)` -- existing matches are skipped.
+4. Imported sessions receive fresh UUIDs and have credentials blanked. A summary message reports how many sessions and folders were added.
 
 ---
 
@@ -523,7 +550,7 @@ mypy src/
 
 ### Running Tests
 
-The test suite contains 142 tests across 7 test files:
+The test suite contains 188 tests across 7 test files:
 
 ```bash
 # Run the full suite
@@ -549,8 +576,8 @@ pytest --cov=src --cov-report=term-missing
 | `test_storage.py` | 13 | CRUD operations over encrypted storage |
 | `test_settings_service.py` | 7 | Settings defaults, overrides, persistence |
 | `test_terminal_service.py` | 23 | Platform detection, SSH command building, sshpass, protocol command builders |
-| `test_routes.py` | 31 | Flask route integration (all endpoints, protocol-aware CRUD) |
-| `test_folders.py` | 36 | Folder CRUD, drag-and-drop move/reorder, sidebar rendering |
+| `test_routes.py` | 59 | Flask route integration (CRUD, protocols, export/import, SSH key browse) |
+| `test_folders.py` | 54 | Folder CRUD, subfolders, drag-and-drop move/reorder, sidebar rendering |
 
 ---
 
