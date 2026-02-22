@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block title_suffix %} &mdash; {{ "Edit" if site else "New" }} Site{% endblock %}
+
+{% block working_pane %}
+<div class="detail-content">
+    <h2 class="wp-heading">{{ "Edit" if site else "New" }} Site</h2>
+
+    <form method="POST">
+        <div class="mb-3">
+            <label for="name" class="form-label">Site Name</label>
+            <input type="text" class="form-control form-control-sm" id="name" name="name"
+                   value="{{ site.name if site else '' }}" required>
+        </div>
+
+        <div class="row">
+            <div class="col-8 mb-3">
+                <label for="hostname" class="form-label">Hostname / IP</label>
+                <input type="text" class="form-control form-control-sm" id="hostname"
+                       name="hostname" value="{{ site.hostname if site else '' }}" required
+                       placeholder="e.g. 192.168.1.10">
+            </div>
+            <div class="col-4 mb-3">
+                <label for="port" class="form-label">Port</label>
+                <input type="number" class="form-control form-control-sm" id="port"
+                       name="port" value="{{ site.port if site else 22 }}"
+                       min="1" max="65535">
+            </div>
+        </div>
+
+        <div class="mb-3">
+            <label for="username" class="form-label">Username</label>
+            <input type="text" class="form-control form-control-sm" id="username"
+                   name="username" value="{{ site.username if site else '' }}">
+        </div>
+
+        <div class="mb-3">
+            <label class="form-label">Authentication</label>
+            <div class="form-check">
+                <input class="form-check-input" type="radio" name="auth_type"
+                       id="auth_password" value="password"
+                       {{ "checked" if not site or site.auth_type == "password" }}
+                       onchange="toggleAuth()">
+                <label class="form-check-label" for="auth_password">Password</label>
+            </div>
+            <div class="form-check">
+                <input class="form-check-input" type="radio" name="auth_type"
+                       id="auth_key" value="key"
+                       {{ "checked" if site and site.auth_type == "key" }}
+                       onchange="toggleAuth()">
+                <label class="form-check-label" for="auth_key">SSH Key</label>
+            </div>
+        </div>
+
+        <div class="mb-3" id="password_group">
+            <label for="password" class="form-label">Password</label>
+            <input type="password" class="form-control form-control-sm" id="password"
+                   name="password" value="{{ site.password if site else '' }}">
+        </div>
+
+        <div class="mb-3 d-none" id="key_group">
+            <label for="key_path" class="form-label">SSH Key Path</label>
+            <input type="text" class="form-control form-control-sm" id="key_path"
+                   name="key_path"
+                   value="{{ site.key_path if site else '~/.ssh/id_rsa' }}"
+                   placeholder="~/.ssh/id_rsa">
+        </div>
+
+        <div class="mb-3">
+            <label for="notes" class="form-label">Notes</label>
+            <textarea class="form-control form-control-sm" id="notes" name="notes"
+                      rows="2">{{ site.notes if site else '' }}</textarea>
+        </div>
+
+        <div class="mb-3">
+            <label for="folder" class="form-label">Folder</label>
+            <select class="form-control form-control-sm" id="folder" name="folder">
+                <option value=""{{ ' selected' if not site or not site.folder }}>(None — root level)</option>
+                {% for fname in sidebar_folders %}
+                <option value="{{ fname }}"{{ ' selected' if site and site.folder == fname }}>{{ fname }}</option>
+                {% endfor %}
+            </select>
+        </div>
+
+        <div class="d-flex gap-2">
+            <button type="submit" class="btn btn-sm btn-primary">
+                <i class="bi bi-{{ 'save' if site else 'plus-lg' }}"></i>
+                {{ "Update" if site else "Create" }}
+            </button>
+            <a href="{{ url_for('sites.index') }}" class="btn btn-sm btn-secondary">Cancel</a>
+        </div>
+    </form>
+</div>
+
+<script>
+function toggleAuth() {
+    var isKey = document.getElementById("auth_key").checked;
+    document.getElementById("password_group").classList.toggle("d-none", isKey);
+    document.getElementById("key_group").classList.toggle("d-none", !isKey);
+}
+toggleAuth();
+</script>
+{% endblock %}

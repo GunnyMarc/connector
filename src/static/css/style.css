@@ -1,0 +1,433 @@
+/* ── Connector — App Layout (universal) ──────────────────────────────────── */
+
+body.app-layout {
+    margin: 0;
+    padding: 0;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: #2b2b2b;
+    font-size: 0.9rem;
+}
+
+/* ── Top bar ────────────────────────────────────────────────────────────── */
+
+.app-topbar {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    background: #1e1e1e;
+    color: #ccc;
+    padding: 0.35rem 1rem;
+    border-bottom: 1px solid #444;
+    flex-shrink: 0;
+}
+
+.app-brand {
+    color: #ddd;
+    text-decoration: none;
+    font-weight: 600;
+    white-space: nowrap;
+    font-size: 0.95rem;
+}
+.app-brand:hover { color: #fff; }
+
+.app-quick-connect {
+    display: flex;
+    gap: 0.35rem;
+    margin-left: auto;
+    max-width: 380px;
+    width: 100%;
+}
+.app-quick-connect .form-control {
+    background: #333;
+    border-color: #555;
+    color: #eee;
+    font-size: 0.82rem;
+}
+.app-quick-connect .form-control::placeholder { color: #888; }
+.app-quick-connect .form-control:focus {
+    background: #3a3a3a;
+    border-color: #777;
+    color: #fff;
+    box-shadow: none;
+}
+
+/* ── Flash alerts strip ─────────────────────────────────────────────────── */
+
+.app-alerts {
+    flex-shrink: 0;
+    padding: 0.25rem 1rem;
+    background: #262626;
+}
+.app-alerts .alert { font-size: 0.8rem; border: none; border-radius: 3px; }
+
+/* ── Two-panel container ────────────────────────────────────────────────── */
+
+.app-container {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+}
+
+/* ── Sidebar (navigation pane) ──────────────────────────────────────────── */
+
+.sidebar {
+    width: 250px;
+    min-width: 200px;
+    max-width: 360px;
+    display: flex;
+    flex-direction: column;
+    background: #fff;
+    border-right: 1px solid #bbb;
+    flex-shrink: 0;
+}
+
+.sidebar-header {
+    background: #3c3c3c;
+    color: #ddd;
+    padding: 0.4rem 0.75rem;
+    font-weight: 700;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    border-bottom: 1px solid #555;
+}
+
+/* Toolbar */
+.sidebar-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 0.3rem 0.5rem;
+    background: #e8e8e8;
+    border-bottom: 1px solid #ccc;
+}
+
+.tb-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    background: none;
+    border: 1px solid transparent;
+    border-radius: 3px;
+    color: #444;
+    cursor: pointer;
+    text-decoration: none;
+    font-size: 0.8rem;
+    padding: 0;
+}
+.tb-btn:hover { background: #d0d0d0; border-color: #aaa; color: #222; }
+.tb-btn.disabled { color: #bbb; cursor: default; pointer-events: none; }
+.tb-btn-danger:hover { background: #f8d7da; border-color: #dc3545; color: #dc3545; }
+
+.tb-sep {
+    width: 1px;
+    height: 18px;
+    background: #bbb;
+    margin: 0 4px;
+}
+
+/* Filter */
+.sidebar-filter {
+    padding: 0.35rem 0.5rem;
+    background: #f0f0f0;
+    border-bottom: 1px solid #ddd;
+}
+.sidebar-filter .form-control {
+    font-size: 0.78rem;
+    padding: 0.2rem 0.5rem;
+}
+
+/* Session list */
+.sidebar-sessions {
+    flex: 1;
+    overflow-y: auto;
+}
+
+/* ── Session root header ─────────────────────────────────────────────── */
+
+.session-folder {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.35rem 0.75rem;
+    font-weight: 600;
+    font-size: 0.8rem;
+    color: #333;
+    background: #e2ecf7;
+    border-bottom: 1px solid #c9d8eb;
+    user-select: none;
+    transition: background 0.15s;
+}
+
+.session-root {
+    position: relative;
+}
+
+.folder-add-btn {
+    margin-left: auto;
+    background: none;
+    border: 1px solid transparent;
+    border-radius: 3px;
+    color: #667;
+    cursor: pointer;
+    font-size: 0.78rem;
+    padding: 1px 4px;
+    line-height: 1;
+}
+.folder-add-btn:hover { background: #c9d8eb; border-color: #aac; color: #333; }
+
+/* ── Subfolders ─────────────────────────────────────────────────────── */
+
+.session-subfolder {
+    background: #edf2f9;
+    padding-left: 0.4rem;
+    cursor: pointer;
+    font-size: 0.78rem;
+}
+.session-subfolder:hover { background: #dde6f3; }
+
+/* Drag handle (grip) */
+.folder-grip {
+    color: #b0b8c8;
+    cursor: grab;
+    font-size: 0.72rem;
+    margin-right: -0.1rem;
+    flex-shrink: 0;
+}
+.folder-grip:active { cursor: grabbing; }
+.session-subfolder:hover .folder-grip { color: #7a8aaa; }
+
+.folder-chevron {
+    font-size: 0.6rem;
+    transition: transform 0.15s;
+}
+.folder-group.collapsed .folder-chevron {
+    transform: rotate(-90deg);
+}
+.folder-group.collapsed .folder-children {
+    display: none;
+}
+
+.folder-icon { color: #6a8fc7; }
+
+.folder-label {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.folder-count {
+    color: #999;
+    font-weight: normal;
+    font-size: 0.7rem;
+    margin-right: 0.15rem;
+}
+
+.folder-actions {
+    display: none;
+    gap: 1px;
+    margin-left: auto;
+}
+.session-subfolder:hover .folder-actions { display: flex; }
+
+.folder-act-btn {
+    background: none;
+    border: 1px solid transparent;
+    border-radius: 3px;
+    color: #778;
+    cursor: pointer;
+    font-size: 0.68rem;
+    padding: 1px 3px;
+    line-height: 1;
+}
+.folder-act-btn:hover { background: #c9d8eb; border-color: #aac; color: #333; }
+.folder-act-danger:hover { background: #f8d7da; border-color: #dc3545; color: #dc3545; }
+
+/* ── Session items ──────────────────────────────────────────────────── */
+
+.session-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.35rem 0.75rem 0.35rem 1.5rem;
+    color: #333;
+    text-decoration: none;
+    border-bottom: 1px solid #eee;
+    font-size: 0.8rem;
+    cursor: grab;
+    transition: background 0.1s;
+}
+.session-item:active { cursor: grabbing; }
+.session-item:hover { background: #eef3fa; color: #111; }
+.session-item.active { background: #d0e1f9; color: #000; font-weight: 600; }
+
+/* Items inside folders are indented further */
+.folder-children .session-item {
+    padding-left: 2.3rem;
+}
+
+.session-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.session-host {
+    color: #999;
+    font-size: 0.72rem;
+    font-family: monospace;
+}
+.session-empty {
+    padding: 2rem 1rem;
+    text-align: center;
+    color: #999;
+    font-size: 0.82rem;
+}
+
+/* ── Drag-and-drop visual feedback ──────────────────────────────────── */
+
+.session-folder.drop-possible {
+    outline: 2px dashed #88b0e8;
+    outline-offset: -2px;
+}
+.session-folder.drop-hover {
+    background: #c5dafa;
+    outline: 2px solid #3b82f6;
+    outline-offset: -2px;
+}
+
+.session-item[draggable="true"]:is(:active, .dragging) {
+    opacity: 0.5;
+}
+
+/* ── Folder reorder drag-and-drop feedback ──────────────────────────── */
+
+.folder-group.folder-dragging {
+    opacity: 0.4;
+}
+
+.folder-group.folder-drop-above {
+    box-shadow: inset 0 3px 0 0 #3b82f6;
+}
+.folder-group.folder-drop-below {
+    box-shadow: inset 0 -3px 0 0 #3b82f6;
+}
+
+/* ── Working pane (right) ───────────────────────────────────────────────── */
+
+.detail-panel {
+    flex: 1;
+    overflow-y: auto;
+    background: #2b2b2b;
+    color: #ccc;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* Centered empty state */
+.detail-empty {
+    text-align: center;
+    color: #666;
+}
+.detail-empty i {
+    font-size: 4rem;
+    display: block;
+    margin-bottom: 1rem;
+}
+
+/* Narrow content column (details, forms) */
+.detail-content {
+    width: 100%;
+    max-width: 560px;
+    padding: 2rem 2rem 3rem;
+    align-self: flex-start;
+}
+
+/* Full-width content (SFTP table, etc.) */
+.wp-full {
+    width: 100%;
+    padding: 1.25rem 1.5rem 2rem;
+    align-self: flex-start;
+}
+
+/* Headings */
+.wp-heading {
+    color: #eee;
+    font-size: 1.25rem;
+    margin-bottom: 1rem;
+}
+.wp-legend {
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: #999;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 0.5rem;
+}
+
+/* Detail header */
+.detail-header {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 1.25rem;
+}
+.detail-header h2 {
+    margin: 0;
+    color: #eee;
+    font-size: 1.3rem;
+}
+
+/* Detail table */
+.detail-table { color: #ccc; margin-bottom: 1.25rem; }
+.detail-table th { color: #999; width: 110px; font-weight: normal; border-color: #444; }
+.detail-table td { border-color: #444; }
+
+/* Action button row */
+.detail-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+
+/* SFTP / full-width table styling inside the dark pane */
+.wp-table { color: #ccc; font-size: 0.82rem; }
+.wp-table thead th { color: #aaa; border-color: #555; background: #333; }
+.wp-table td { border-color: #444; }
+.wp-table a { color: #8cb4ff; }
+.wp-table a:hover { color: #bdd4ff; }
+
+/* Form controls inside the dark pane */
+.detail-content .form-label,
+.wp-full .form-label { color: #aaa; font-size: 0.8rem; margin-bottom: 0.2rem; }
+
+.detail-content .form-control,
+.wp-full .form-control {
+    background: #383838;
+    border-color: #555;
+    color: #eee;
+}
+.detail-content .form-control:focus,
+.wp-full .form-control:focus {
+    background: #404040;
+    border-color: #777;
+    color: #fff;
+    box-shadow: none;
+}
+.detail-content .form-control::placeholder,
+.wp-full .form-control::placeholder { color: #777; }
+
+.detail-content .form-check-label { color: #bbb; }
+.detail-content .form-check-input { background-color: #444; border-color: #666; }
+.detail-content .form-check-input:checked { background-color: #0d6efd; border-color: #0d6efd; }
+
+.detail-content hr { border-color: #555; }
+
+/* Alerts inside the dark pane */
+.detail-content .alert { font-size: 0.8rem; }
+
+/* General typography helpers in the pane */
+pre code { white-space: pre-wrap; word-wrap: break-word; }

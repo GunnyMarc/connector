@@ -1,0 +1,136 @@
+"""CRUD routes for site management."""
+
+from __future__ import annotations
+
+from flask import (
+    Blueprint,
+    current_app,
+    flash,
+    redirect,
+    render_template,
+    request,
+    url_for,
+)
+
+from src.models.site import Site
+from src.services.storage import SiteStorage
+
+sites_bp = Blueprint("sites", __name__)
+
+
+def _storage() -> SiteStorage:
+    """Retrieve the shared :class:`SiteStorage` from the app config."""
+    return current_app.config["STORAGE"]
+
+
+# ── List (dashboard) ──────────────────────────────────────────────────────────
+
+
+@sites_bp.route("/")
+def index():
+    """Render the session-manager dashboard.
+
+    The context processor injects ``sidebar_sites``, ``active_site``, and
+    ``platform_info`` automatically — no need to pass them from the route.
+    """
+    return render_template("index.html")
+
+
+# ── Create ────────────────────────────────────────────────────────────────────
+
+
+@sites_bp.route("/sites/new", methods=["GET", "POST"])
+def create():
+    """Show the new-site form or process its submission."""
+    if request.method == "POST":
+        site = Site(
+            name=request.form["name"],
+            hostname=request.form["hostname"],
+            port=int(request.form.get("port", 22)),
+            username=request.form.get("username", ""),
+            auth_type=request.form.get("auth_type", "password"),
+            password=request.form.get("password", ""),
+            key_path=request.form.get("key_path", ""),
+            notes=request.form.get("notes", ""),
+            folder=request.form.get("folder", ""),
+        )
+        _storage().create_site(site)
+        flash(f"Site '{site.name}' created.", "success")
+        return redirect(url_for("sites.index"))
+
+    return render_template("site_form.html", site=None)
+
+
+# ── Update ────────────────────────────────────────────────────────────────────
+
+
+@sites_bp.route("/sites/<site_id>/edit", methods=["GET", "POST"])
+def edit(site_id: str):
+    """Show the edit form for *site_id* or process the update."""
+    site = _storage().get_site(site_id)
+    if not site:
+        flash("Site not found.", "danger")
+        return redirect(url_for("sites.index"))
+
+    if request.method == "POST":
+        updates = {
+            "name": request.form["name"],
+            "hostname": request.form["hostname"],
+            "port": int(request.form.get("port", 22)),
+            "username": request.form.get("username", ""),
+            "auth_type": request.form.get("auth_type", "password"),
+            "password": request.form.get("password", ""),
+            "key_path": request.form.get("key_path", ""),
+            "notes": request.form.get("notes", ""),
+            "folder": request.form.get("folder", ""),
+        }
+        _storage().update_site(site_id, updates)
+        flash(f"Site '{updates['name']}' updated.", "success")
+        return redirect(url_for("sites.index"))
+
+    return render_template("site_form.html", site=site)
+
+
+# ── Duplicate ─────────────────────────────────────────────────────────────────
+
+
+@sites_bp.route("/sites/<site_id>/duplicate", methods=["POST"])
+def duplicate(site_id: str):
+    """Create a copy of the site with '(Copy)' appended to the name."""
+    storage = _storage()
+    original = storage.get_site(site_id)
+    if not original:
+        flash("Site not found.", "danger")
+        return redirect(url_for("sites.index"))
+
+    copy = Site(
+        name=f"{original.name} (Copy)",
+        hostname=original.hostname,
+        port=original.port,
+        username=original.username,
+        auth_type=original.auth_type,
+        password=original.password,
+        key_path=original.key_path,
+        notes=original.notes,
+        folder=original.folder,
+    )
+    storage.create_site(copy)
+    flash(f"Site '{copy.name}' created.", "success")
+    return redirect(url_for("sites.index", site=copy.id))
+
+
+# ── Delete ────────────────────────────────────────────────────────────────────
+
+
+@sites_bp.route("/sites/<site_id>/delete", methods=["POST"])
+def delete(site_id: str):
+    """Delete the site identified by *site_id*."""
+    site = _storage().get_site(site_id)
+    name = site.name if site else "Unknown"
+
+    if _storage().delete_site(site_id):
+        flash(f"Site '{name}' deleted.", "success")
+    else:
+        flash("Site not found.", "danger")
+
+    return redirect(url_for("sites.index"))

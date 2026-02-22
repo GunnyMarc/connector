@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title_suffix %} &mdash; SSH: {{ site.name }}{% endblock %}
+
+{% block working_pane %}
+<div class="detail-content">
+    <div class="detail-header">
+        <h2><i class="bi bi-terminal"></i> {{ site.name }}</h2>
+        <span class="text-muted font-monospace" style="font-size:.8rem;">
+            {{ site.username }}@{{ site.hostname }}:{{ site.port }}
+        </span>
+    </div>
+
+    <table class="table table-sm detail-table">
+        <tr><th>Host</th><td class="font-monospace">{{ site.hostname }}</td></tr>
+        <tr><th>Port</th><td class="font-monospace">{{ site.port }}</td></tr>
+        <tr><th>Username</th><td class="font-monospace">{{ site.username }}</td></tr>
+        <tr>
+            <th>Auth</th>
+            <td>
+                <span class="badge bg-{{ 'info' if site.auth_type == 'key' else 'secondary' }}">
+                    {{ site.auth_type }}
+                </span>
+                {% if site.auth_type == "password" and site.password %}
+                    {% if platform_info.has_sshpass %}
+                    <span class="badge bg-success ms-1">auto-login</span>
+                    {% else %}
+                    <span class="badge bg-warning text-dark ms-1">manual entry</span>
+                    {% endif %}
+                {% endif %}
+            </td>
+        </tr>
+        {% if site.auth_type == "key" and site.key_path %}
+        <tr><th>Key</th><td class="font-monospace">{{ site.key_path }}</td></tr>
+        {% endif %}
+        <tr><th>Terminal</th><td>{{ platform_info.terminal }} ({{ platform_info.system_label }})</td></tr>
+    </table>
+
+    <form method="POST" class="mb-3">
+        <button type="submit" class="btn btn-success">
+            <i class="bi bi-terminal"></i> Open SSH in {{ platform_info.terminal }}
+        </button>
+    </form>
+
+    {% if site.auth_type == "password" %}
+        {% if site.password and platform_info.has_sshpass %}
+        <div class="alert alert-success py-2" style="font-size:.82rem;">
+            <i class="bi bi-shield-check"></i>
+            Stored password will be sent automatically via <code>sshpass</code>.
+        </div>
+        {% elif site.password and not platform_info.has_sshpass %}
+        <div class="alert alert-warning py-2" style="font-size:.82rem;">
+            <i class="bi bi-shield-lock"></i>
+            Password stored but <code>sshpass</code> not found &mdash; you will be
+            prompted in the terminal.
+            {% if platform_info.system == "Darwin" %}
+            Install: <code>brew install esolitos/ipa/sshpass</code>
+            {% elif platform_info.system == "Linux" %}
+            Install: <code>sudo apt install sshpass</code>
+            {% endif %}
+        </div>
+        {% else %}
+        <div class="alert alert-info py-2" style="font-size:.82rem;">
+            <i class="bi bi-shield-lock"></i>
+            No password stored &mdash; you will be prompted in the terminal.
+        </div>
+        {% endif %}
+    {% endif %}
+
+    <a href="{{ url_for('sites.index', site=site.id) }}" class="btn btn-sm btn-outline-secondary">
+        <i class="bi bi-arrow-left"></i> Back
+    </a>
+</div>
+{% endblock %}

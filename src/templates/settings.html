@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+{% block title_suffix %} &mdash; Settings{% endblock %}
+
+{% block working_pane %}
+<div class="detail-content">
+    <h2 class="wp-heading"><i class="bi bi-gear"></i> Settings</h2>
+    <p class="text-muted" style="font-size:.82rem;">Global defaults for new sessions.</p>
+
+    <form method="POST">
+        <!-- Platform (read-only) -->
+        <fieldset class="mb-3">
+            <legend class="wp-legend">Platform</legend>
+            <table class="table table-sm detail-table mb-0">
+                <tr><th>OS</th><td>{{ platform_info.system_label }}</td></tr>
+                <tr><th>Terminal</th><td>{{ platform_info.terminal }}</td></tr>
+                <tr>
+                    <th>sshpass</th>
+                    <td>
+                        {% if platform_info.has_sshpass %}
+                        <span class="badge bg-success">installed</span>
+                        {% else %}
+                        <span class="badge bg-warning text-dark">not found</span>
+                        {% endif %}
+                    </td>
+                </tr>
+            </table>
+        </fieldset>
+
+        <hr class="border-secondary">
+
+        <!-- Connection defaults -->
+        <fieldset class="mb-3">
+            <legend class="wp-legend">Connection Defaults</legend>
+            <div class="row">
+                <div class="col-6 mb-2">
+                    <label for="default_port" class="form-label">SSH Port</label>
+                    <input type="number" class="form-control form-control-sm"
+                           id="default_port" name="default_port"
+                           value="{{ settings.default_port }}" min="1" max="65535">
+                </div>
+                <div class="col-6 mb-2">
+                    <label for="default_username" class="form-label">Username</label>
+                    <input type="text" class="form-control form-control-sm"
+                           id="default_username" name="default_username"
+                           value="{{ settings.default_username }}" placeholder="(none)">
+                </div>
+            </div>
+            <div class="mb-2">
+                <label class="form-label">Auth Type</label>
+                <div class="form-check">
+                    <input class="form-check-input" type="radio" name="default_auth_type"
+                           id="auth_pw" value="password"
+                           {{ "checked" if settings.default_auth_type == "password" }}>
+                    <label class="form-check-label" for="auth_pw">Password</label>
+                </div>
+                <div class="form-check">
+                    <input class="form-check-input" type="radio" name="default_auth_type"
+                           id="auth_key" value="key"
+                           {{ "checked" if settings.default_auth_type == "key" }}>
+                    <label class="form-check-label" for="auth_key">SSH Key</label>
+                </div>
+            </div>
+            <div class="mb-2">
+                <label for="default_key_path" class="form-label">Default Key Path</label>
+                <input type="text" class="form-control form-control-sm"
+                       id="default_key_path" name="default_key_path"
+                       value="{{ settings.default_key_path }}">
+            </div>
+        </fieldset>
+
+        <hr class="border-secondary">
+
+        <!-- Timeouts -->
+        <fieldset class="mb-3">
+            <legend class="wp-legend">Timeouts (seconds)</legend>
+            <div class="row">
+                <div class="col-6 mb-2">
+                    <label for="ssh_timeout" class="form-label">Connection</label>
+                    <input type="number" class="form-control form-control-sm"
+                           id="ssh_timeout" name="ssh_timeout"
+                           value="{{ settings.ssh_timeout }}" min="1" max="300">
+                </div>
+                <div class="col-6 mb-2">
+                    <label for="command_timeout" class="form-label">Command</label>
+                    <input type="number" class="form-control form-control-sm"
+                           id="command_timeout" name="command_timeout"
+                           value="{{ settings.command_timeout }}" min="1" max="600">
+                </div>
+            </div>
+        </fieldset>
+
+        <div class="d-flex gap-2">
+            <button type="submit" class="btn btn-sm btn-primary">
+                <i class="bi bi-save"></i> Save
+            </button>
+            <a href="{{ url_for('sites.index') }}" class="btn btn-sm btn-secondary">Cancel</a>
+        </div>
+    </form>
+</div>
+{% endblock %}
