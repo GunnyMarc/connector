@@ -144,9 +144,18 @@
                        data-site-id="{{ s.id }}"
                        draggable="true"
                        ondragstart="onSiteDragStart(event)">
-                        <i class="bi bi-display"></i>
+                        {% if s.protocol == 'local' %}<i class="bi bi-terminal-fill"></i>
+                        {% elif s.protocol == 'serial' %}<i class="bi bi-usb-drive-fill"></i>
+                        {% elif s.protocol == 'telnet' %}<i class="bi bi-ethernet"></i>
+                        {% elif s.protocol == 'raw' %}<i class="bi bi-hdd-network"></i>
+                        {% else %}<i class="bi bi-display"></i>
+                        {% endif %}
                         <span class="session-name">{{ s.name }}</span>
-                        <span class="session-host">{{ s.hostname }}</span>
+                        <span class="session-host">
+                            {%- if s.protocol == 'local' %}local
+                            {%- elif s.protocol == 'serial' %}{{ s.serial_port or 'serial' }}
+                            {%- else %}{{ s.hostname }}
+                            {%- endif %}</span>
                     </a>
                     {% endfor %}
                 </div>
@@ -161,9 +170,18 @@
                data-site-id="{{ s.id }}"
                draggable="true"
                ondragstart="onSiteDragStart(event)">
-                <i class="bi bi-display"></i>
+                {% if s.protocol == 'local' %}<i class="bi bi-terminal-fill"></i>
+                {% elif s.protocol == 'serial' %}<i class="bi bi-usb-drive-fill"></i>
+                {% elif s.protocol == 'telnet' %}<i class="bi bi-ethernet"></i>
+                {% elif s.protocol == 'raw' %}<i class="bi bi-hdd-network"></i>
+                {% else %}<i class="bi bi-display"></i>
+                {% endif %}
                 <span class="session-name">{{ s.name }}</span>
-                <span class="session-host">{{ s.hostname }}</span>
+                <span class="session-host">
+                    {%- if s.protocol == 'local' %}local
+                    {%- elif s.protocol == 'serial' %}{{ s.serial_port or 'serial' }}
+                    {%- else %}{{ s.hostname }}
+                    {%- endif %}</span>
             </a>
             {% else %}
             {% if not sidebar_folders %}

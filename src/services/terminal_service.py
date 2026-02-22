@@ -1,8 +1,9 @@
-"""Platform detection and native terminal launcher for SSH connections.
+"""Platform detection and native terminal launcher for connections.
 
 Detects the host OS at startup and identifies the default terminal
-application.  Provides :meth:`launch_ssh` to open an interactive SSH
-session in that terminal.
+application.  Provides :meth:`launch_session` (protocol-aware) and the
+legacy :meth:`launch_ssh` to open interactive sessions in the native
+terminal.
 """
 
 from __future__ import annotations
@@ -118,16 +119,29 @@ def detect_platform() -> PlatformInfo:
     return info
 
 
-# ── SSH launcher ──────────────────────────────────────────────────────────────
+# ── Session launcher ──────────────────────────────────────────────────────────
 
 
 class TerminalService:
-    """Launch SSH sessions in the host's native terminal application."""
+    """Launch sessions in the host's native terminal application."""
 
     def __init__(self, platform_info: Optional[PlatformInfo] = None) -> None:
         self.platform_info = platform_info or detect_platform()
 
     # -- Public API ----------------------------------------------------------
+
+    def launch_session(self, site) -> None:
+        """Open an interactive session in the native terminal.
+
+        Dispatches to the correct command builder based on ``site.protocol``.
+        Accepts a :class:`~src.models.site.Site` instance (or any object
+        with the same attributes).
+
+        Raises :class:`RuntimeError` on unsupported protocol or launch failure.
+        """
+        protocol = getattr(site, "protocol", "ssh2")
+        cmd = self._build_command_for_protocol(site, protocol)
+        self._launch_in_terminal(cmd)
 
     def launch_ssh(
         self,
@@ -148,15 +162,20 @@ class TerminalService:
         ssh_cmd = self._build_ssh_command(
             hostname, port, username, key_path, password,
         )
-        system = self.platform_info.system
+        self._launch_in_terminal(ssh_cmd)
 
+    # -- Internal launcher ---------------------------------------------------
+
+    def _launch_in_terminal(self, cmd: str) -> None:
+        """Dispatch *cmd* to the platform-specific terminal launcher."""
+        system = self.platform_info.system
         try:
             if system == "Darwin":
-                self._launch_macos(ssh_cmd)
+                self._launch_macos(cmd)
             elif system == "Linux":
-                self._launch_linux(ssh_cmd)
+                self._launch_linux(cmd)
             elif system == "Windows":
-                self._launch_windows(ssh_cmd)
+                self._launch_windows(cmd)
             else:
                 raise RuntimeError(
                     f"Unsupported platform: {self.platform_info.system_label}"
@@ -165,6 +184,66 @@ class TerminalService:
             raise RuntimeError(
                 f"Terminal '{self.platform_info.terminal}' not found: {exc}"
             ) from exc
+
+    # -- Protocol command builders -------------------------------------------
+
+    def _build_command_for_protocol(self, site, protocol: str) -> str:
+        """Return the shell command string for the given protocol."""
+        if protocol in ("ssh2", "ssh1"):
+            return self._build_ssh_command(
+                hostname=site.hostname,
+                port=site.port,
+                username=site.username,
+                key_path=site.key_path if site.auth_type == "key" else "",
+                password=site.password if site.auth_type == "password" else "",
+                ssh_version=1 if protocol == "ssh1" else 2,
+            )
+        if protocol == "local":
+            return self._build_local_command()
+        if protocol == "raw":
+            return self._build_raw_command(site.hostname, site.port)
+        if protocol == "telnet":
+            return self._build_telnet_command(
+                site.hostname, site.port, site.username,
+            )
+        if protocol == "serial":
+            return self._build_serial_command(
+                site.serial_port, site.serial_baud,
+            )
+        raise RuntimeError(f"Unsupported protocol: {protocol}")
+
+    def _build_local_command(self) -> str:
+        """Build a command that opens the user's default login shell."""
+        shell = os.environ.get("SHELL", "/bin/bash")
+        return shlex.quote(shell) + " --login"
+
+    def _build_raw_command(self, hostname: str, port: int) -> str:
+        """Build a ``nc`` (netcat) command for raw TCP connections."""
+        parts = ["nc", hostname, str(port)]
+        return " ".join(shlex.quote(p) for p in parts)
+
+    def _build_telnet_command(
+        self, hostname: str, port: int, username: str = "",
+    ) -> str:
+        """Build a ``telnet`` command.
+
+        If *username* is supplied, it is passed via ``-l``.
+        """
+        parts = ["telnet"]
+        if username:
+            parts.extend(["-l", username])
+        parts.append(hostname)
+        if port != 23:
+            parts.append(str(port))
+        return " ".join(shlex.quote(p) for p in parts)
+
+    def _build_serial_command(
+        self, serial_port: str, serial_baud: int,
+    ) -> str:
+        """Build a ``screen`` command for serial connections."""
+        port_path = serial_port or "/dev/ttyUSB0"
+        parts = ["screen", port_path, str(serial_baud)]
+        return " ".join(shlex.quote(p) for p in parts)
 
     # -- SSH command construction --------------------------------------------
 
@@ -175,14 +254,19 @@ class TerminalService:
         username: str,
         key_path: str = "",
         password: str = "",
+        ssh_version: int = 2,
     ) -> str:
         """Build a shell-safe ``ssh …`` command string.
 
         When *password* is supplied and ``sshpass`` is available, the
         returned command is wrapped so the password is fed automatically
         via the ``SSHPASS`` environment variable.
+
+        *ssh_version* selects SSH protocol version (1 or 2).
         """
         parts = ["ssh"]
+        if ssh_version == 1:
+            parts.extend(["-o", "Protocol=1"])
         if key_path:
             parts.extend(["-i", os.path.expanduser(key_path)])
         if port != 22:

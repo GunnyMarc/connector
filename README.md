@@ -1,8 +1,8 @@
 # Connector
 
-SSH and SFTP session manager with a web UI, encrypted credential storage, and native terminal integration.
+Multi-protocol session manager with a web UI, encrypted credential storage, and native terminal integration.
 
-Connector lets you organise remote sessions into folders, store credentials securely (Fernet AES encryption at rest), and launch SSH connections directly in your platform's native terminal. It also provides a browser-based SFTP file manager.
+Connector lets you organise remote sessions into folders, store credentials securely (Fernet AES encryption at rest), and launch connections directly in your platform's native terminal. Supports SSH2, SSH1, Local Shell, Raw TCP, Telnet, and Serial protocols. SSH sessions also include a browser-based SFTP file manager.
 
 ---
 
@@ -22,7 +22,8 @@ Connector lets you organise remote sessions into folders, store credentials secu
 - [Web UI Guide](#web-ui-guide)
   - [Dashboard](#dashboard)
   - [Creating a Session](#creating-a-session)
-  - [Connecting via SSH](#connecting-via-ssh)
+  - [Protocols](#protocols)
+  - [Connecting](#connecting)
   - [SFTP File Browser](#sftp-file-browser)
   - [Folders and Organisation](#folders-and-organisation)
   - [Quick Connect](#quick-connect)
@@ -40,12 +41,14 @@ Connector lets you organise remote sessions into folders, store credentials secu
 
 ## Features
 
+- **Multi-protocol support** -- SSH2, SSH1, Local Shell, Raw TCP, Telnet, and Serial connections from a single interface
 - **Encrypted storage** -- all credentials (passwords, key paths) encrypted at rest with Fernet (AES-128-CBC + HMAC)
-- **Native terminal launch** -- opens SSH sessions in your OS terminal (Terminal.app, iTerm, GNOME Terminal, Windows Terminal, and more)
-- **SFTP file browser** -- browse, upload, and download files through the web UI
+- **Native terminal launch** -- opens sessions in your OS terminal (Terminal.app, iTerm, GNOME Terminal, Windows Terminal, and more)
+- **SFTP file browser** -- browse, upload, and download files through the web UI (SSH sessions)
 - **Folder organisation** -- group sessions into collapsible, drag-and-drop folders
 - **Quick connect** -- one-shot `user@host:port` connections from the top bar
-- **Password auto-login** -- uses `sshpass` when available to pass stored passwords automatically
+- **Password auto-login** -- uses `sshpass` when available to pass stored SSH passwords automatically
+- **Dynamic forms** -- the session form adapts its fields to the selected protocol (hostname/port for network protocols, serial port/baud for serial, nothing for local shell)
 - **Dark-themed UI** -- two-panel session manager layout built with Bootstrap 5
 - **Zero external database** -- all data lives in encrypted flat files under `data/`
 
@@ -258,7 +261,7 @@ connector/
 ### Request Flow
 
 ```
-User clicks "SSH" button
+User clicks "Connect" button
          |
          v
 Browser POST /sites/<id>/ssh
@@ -270,20 +273,26 @@ connections_bp.ssh()
     |         |
     v         v
 SiteStorage  TerminalService
-.get_site()  .launch_ssh(host, port, user, ...)
+.get_site()  .launch_session(site)
     |              |
-    |         +----+----+
-    |         |         |
-    |         v         v
-    |    _build_ssh    _launch_macos() / _launch_linux() / _launch_windows()
-    |    _command()          |
-    |         |              v
-    v         |     osascript / gnome-terminal / wt / cmd
-Encrypted     |     opens native terminal with SSH command
-data/.enc     |
-              v
-      "ssh [-i key] user@host -p port"
-      (optionally wrapped with sshpass)
+    |         _build_command_for_protocol()
+    |              |
+    |         +----+----+----+----+----+----+
+    |         |    |    |    |    |    |    |
+    |         v    v    v    v    v    v    v
+    |       ssh2 ssh1 local raw  tel  serial
+    |         |    |    |    |    |    |
+    |         v    v    v    v    v    v
+    |    _launch_macos() / _launch_linux() / _launch_windows()
+    |              |
+    v              v
+Encrypted     Native terminal runs protocol command:
+data/.enc       ssh2:   ssh user@host -p port
+                ssh1:   ssh -o Protocol=1 user@host
+                local:  /bin/bash --login
+                raw:    nc host port
+                telnet: telnet [-l user] host [port]
+                serial: screen /dev/ttyUSB0 9600
 ```
 
 ### Encryption Pipeline
@@ -337,34 +346,54 @@ All templates extend `base.html` and render into the `{% block working_pane %}` 
 
 The main page (`/`) shows a two-panel layout:
 
-- **Left sidebar** -- lists all sessions, organised into collapsible folders. Includes a filter input to search by name and a toolbar with Add, Edit, Duplicate, and Delete buttons.
-- **Right panel** -- shows details for the selected session (hostname, port, username, auth type, notes) with action buttons for SSH, SFTP, and Edit.
+- **Left sidebar** -- lists all sessions with protocol-specific icons, organised into collapsible folders. Includes a filter input to search by name and a toolbar with Add, Edit, Duplicate, and Delete buttons.
+- **Right panel** -- shows details for the selected session (protocol, hostname, port, username, auth type, notes) with action buttons for Connect, SFTP (SSH only), and Edit.
 
 Click any session in the sidebar to select it. The URL updates to `/?site=<id>`.
 
 ### Creating a Session
 
 1. Click the **+** button in the sidebar toolbar, or navigate to `/sites/new`.
-2. Fill in the form:
-   - **Site Name** (required) -- a human-readable label
-   - **Hostname / IP** (required)
-   - **Port** -- defaults to 22
-   - **Username**
-   - **Auth Type** -- Password or SSH Key
-   - **Password** or **SSH Key Path** -- depending on auth type
-   - **Notes** -- free-form text
-   - **Folder** -- assign to an existing folder or leave at root
-3. Click **Create**.
+2. Select a **Protocol** from the dropdown. The form dynamically shows/hides fields based on the selected protocol.
+3. Fill in the visible fields:
+
+   | Protocol | Fields shown |
+   |---|---|
+   | **SSH2** (default) | Hostname, Port, Username, Auth (Password / SSH Key), Notes, Folder |
+   | **SSH1** | Same as SSH2 |
+   | **Local Shell** | Notes, Folder (no network or auth fields) |
+   | **Raw** | Hostname, Port, Notes, Folder |
+   | **Telnet** | Hostname, Port, Username, Notes, Folder |
+   | **Serial** | Serial Port (e.g. `/dev/ttyUSB0`), Baud Rate, Notes, Folder |
+
+4. Click **Create**.
 
 To edit an existing session, select it and click the pencil icon, or navigate to `/sites/<id>/edit`.
 
-To duplicate, select a session and click the copy icon. The duplicate inherits all fields (including folder) with " (Copy)" appended to the name.
+To duplicate, select a session and click the copy icon. The duplicate inherits all fields (including protocol, folder, serial settings) with " (Copy)" appended to the name.
 
-### Connecting via SSH
+### Protocols
 
-1. Select a session and click **SSH** (or navigate to `/sites/<id>/ssh`).
-2. The connection details page shows host, port, username, auth method, and detected terminal.
-3. Click **Open SSH in [Terminal Name]** to launch the connection.
+Connector supports six connection protocols:
+
+| Protocol | Description | Terminal command |
+|---|---|---|
+| **SSH2** | SSH version 2 (default) | `ssh user@host -p port` |
+| **SSH1** | SSH version 1 (legacy) | `ssh -o Protocol=1 user@host` |
+| **Local Shell** | Opens a local terminal session | `bash --login` (or your `$SHELL`) |
+| **Raw** | Raw TCP connection | `nc hostname port` |
+| **Telnet** | Telnet connection | `telnet [-l user] hostname [port]` |
+| **Serial** | Serial port connection | `screen /dev/ttyUSB0 9600` |
+
+The sidebar uses distinct icons for each protocol type for quick identification.
+
+### Connecting
+
+1. Select a session and click the **Connect** button (or navigate to `/sites/<id>/ssh`).
+2. The connection details page shows protocol-specific information and the detected terminal.
+3. Click the launch button to open the session.
+
+The button label adapts to the protocol: "Open SSH", "Open Shell", "Open Telnet", "Open Serial", or "Open Connection".
 
 Connector opens your platform's native terminal application:
 
@@ -374,7 +403,7 @@ Connector opens your platform's native terminal application:
 | Linux | GNOME Terminal, Konsole, Xfce Terminal, MATE Terminal, LXTerminal, Tilix, Alacritty, xterm |
 | Windows | Windows Terminal, Command Prompt |
 
-**Password auto-login:** If the session has a stored password and `sshpass` is installed on your system, the password is passed automatically via the `SSHPASS` environment variable. Otherwise, the terminal will prompt you interactively.
+**Password auto-login (SSH only):** If the session has a stored password and `sshpass` is installed on your system, the password is passed automatically via the `SSHPASS` environment variable. Otherwise, the terminal will prompt you interactively.
 
 To install `sshpass`:
 
@@ -388,7 +417,9 @@ sudo apt install sshpass
 
 ### SFTP File Browser
 
-1. Select a session and click **SFTP** (or navigate to `/sites/<id>/sftp`).
+SFTP is available for **SSH sessions only** (SSH1 and SSH2).
+
+1. Select an SSH session and click **SFTP** (or navigate to `/sites/<id>/sftp`).
 2. The browser shows the remote directory listing with file names, sizes, and modification dates.
 3. Click a directory name to navigate into it. Click `..` to go up.
 4. Click the download icon next to any file to download it.
@@ -492,7 +523,7 @@ mypy src/
 
 ### Running Tests
 
-The test suite contains 108 tests across 7 test files:
+The test suite contains 142 tests across 7 test files:
 
 ```bash
 # Run the full suite
@@ -513,12 +544,12 @@ pytest --cov=src --cov-report=term-missing
 
 | Test File | Tests | Coverage |
 |---|---|---|
-| `test_site.py` | 10 | Site dataclass (creation, serialisation, round-trips, masking) |
+| `test_site.py` | 21 | Site dataclass (creation, serialisation, round-trips, masking, protocol fields/properties) |
 | `test_crypto_service.py` | 11 | Key generation, permissions, encrypt/decrypt, error handling |
 | `test_storage.py` | 13 | CRUD operations over encrypted storage |
 | `test_settings_service.py` | 7 | Settings defaults, overrides, persistence |
-| `test_terminal_service.py` | 12 | Platform detection, SSH command building, sshpass integration |
-| `test_routes.py` | 19 | Flask route integration (all endpoints) |
+| `test_terminal_service.py` | 23 | Platform detection, SSH command building, sshpass, protocol command builders |
+| `test_routes.py` | 31 | Flask route integration (all endpoints, protocol-aware CRUD) |
 | `test_folders.py` | 36 | Folder CRUD, drag-and-drop move/reorder, sidebar rendering |
 
 ---

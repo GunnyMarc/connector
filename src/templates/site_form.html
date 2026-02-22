@@ -12,57 +12,99 @@
                    value="{{ site.name if site else '' }}" required>
         </div>
 
-        <div class="row">
-            <div class="col-8 mb-3">
-                <label for="hostname" class="form-label">Hostname / IP</label>
-                <input type="text" class="form-control form-control-sm" id="hostname"
-                       name="hostname" value="{{ site.hostname if site else '' }}" required
-                       placeholder="e.g. 192.168.1.10">
-            </div>
-            <div class="col-4 mb-3">
-                <label for="port" class="form-label">Port</label>
-                <input type="number" class="form-control form-control-sm" id="port"
-                       name="port" value="{{ site.port if site else 22 }}"
-                       min="1" max="65535">
+        {# ── Protocol selector ────────────────────────────────────── #}
+        <div class="mb-3">
+            <label for="protocol" class="form-label">Protocol</label>
+            <select class="form-control form-control-sm" id="protocol" name="protocol"
+                    onchange="toggleProtocol()">
+                {% set current_proto = site.protocol if site else 'ssh2' %}
+                <option value="ssh2"{{ ' selected' if current_proto == 'ssh2' }}>SSH2</option>
+                <option value="ssh1"{{ ' selected' if current_proto == 'ssh1' }}>SSH1</option>
+                <option value="local"{{ ' selected' if current_proto == 'local' }}>Local Shell</option>
+                <option value="raw"{{ ' selected' if current_proto == 'raw' }}>Raw</option>
+                <option value="telnet"{{ ' selected' if current_proto == 'telnet' }}>Telnet</option>
+                <option value="serial"{{ ' selected' if current_proto == 'serial' }}>Serial</option>
+            </select>
+        </div>
+
+        {# ── Network fields (hostname + port) — ssh1/ssh2/raw/telnet ── #}
+        <div id="network_group">
+            <div class="row">
+                <div class="col-8 mb-3">
+                    <label for="hostname" class="form-label">Hostname / IP</label>
+                    <input type="text" class="form-control form-control-sm" id="hostname"
+                           name="hostname" value="{{ site.hostname if site else '' }}"
+                           placeholder="e.g. 192.168.1.10">
+                </div>
+                <div class="col-4 mb-3">
+                    <label for="port" class="form-label">Port</label>
+                    <input type="number" class="form-control form-control-sm" id="port"
+                           name="port" value="{{ site.port if site else 22 }}"
+                           min="1" max="65535">
+                </div>
             </div>
         </div>
 
-        <div class="mb-3">
+        {# ── Serial fields — serial only ──────────────────────────── #}
+        <div id="serial_group" class="d-none">
+            <div class="row">
+                <div class="col-8 mb-3">
+                    <label for="serial_port" class="form-label">Serial Port</label>
+                    <input type="text" class="form-control form-control-sm" id="serial_port"
+                           name="serial_port"
+                           value="{{ site.serial_port if site else '' }}"
+                           placeholder="e.g. /dev/ttyUSB0 or COM3">
+                </div>
+                <div class="col-4 mb-3">
+                    <label for="serial_baud" class="form-label">Baud Rate</label>
+                    <input type="number" class="form-control form-control-sm" id="serial_baud"
+                           name="serial_baud"
+                           value="{{ site.serial_baud if site else 9600 }}"
+                           min="300" max="921600">
+                </div>
+            </div>
+        </div>
+
+        {# ── Username — ssh1/ssh2/telnet ──────────────────────────── #}
+        <div class="mb-3" id="username_group">
             <label for="username" class="form-label">Username</label>
             <input type="text" class="form-control form-control-sm" id="username"
                    name="username" value="{{ site.username if site else '' }}">
         </div>
 
-        <div class="mb-3">
-            <label class="form-label">Authentication</label>
-            <div class="form-check">
-                <input class="form-check-input" type="radio" name="auth_type"
-                       id="auth_password" value="password"
-                       {{ "checked" if not site or site.auth_type == "password" }}
-                       onchange="toggleAuth()">
-                <label class="form-check-label" for="auth_password">Password</label>
+        {# ── Authentication — ssh1/ssh2 only ──────────────────────── #}
+        <div id="auth_group">
+            <div class="mb-3">
+                <label class="form-label">Authentication</label>
+                <div class="form-check">
+                    <input class="form-check-input" type="radio" name="auth_type"
+                           id="auth_password" value="password"
+                           {{ "checked" if not site or site.auth_type == "password" }}
+                           onchange="toggleAuth()">
+                    <label class="form-check-label" for="auth_password">Password</label>
+                </div>
+                <div class="form-check">
+                    <input class="form-check-input" type="radio" name="auth_type"
+                           id="auth_key" value="key"
+                           {{ "checked" if site and site.auth_type == "key" }}
+                           onchange="toggleAuth()">
+                    <label class="form-check-label" for="auth_key">SSH Key</label>
+                </div>
             </div>
-            <div class="form-check">
-                <input class="form-check-input" type="radio" name="auth_type"
-                       id="auth_key" value="key"
-                       {{ "checked" if site and site.auth_type == "key" }}
-                       onchange="toggleAuth()">
-                <label class="form-check-label" for="auth_key">SSH Key</label>
+
+            <div class="mb-3" id="password_group">
+                <label for="password" class="form-label">Password</label>
+                <input type="password" class="form-control form-control-sm" id="password"
+                       name="password" value="{{ site.password if site else '' }}">
             </div>
-        </div>
 
-        <div class="mb-3" id="password_group">
-            <label for="password" class="form-label">Password</label>
-            <input type="password" class="form-control form-control-sm" id="password"
-                   name="password" value="{{ site.password if site else '' }}">
-        </div>
-
-        <div class="mb-3 d-none" id="key_group">
-            <label for="key_path" class="form-label">SSH Key Path</label>
-            <input type="text" class="form-control form-control-sm" id="key_path"
-                   name="key_path"
-                   value="{{ site.key_path if site else '~/.ssh/id_rsa' }}"
-                   placeholder="~/.ssh/id_rsa">
+            <div class="mb-3 d-none" id="key_group">
+                <label for="key_path" class="form-label">SSH Key Path</label>
+                <input type="text" class="form-control form-control-sm" id="key_path"
+                       name="key_path"
+                       value="{{ site.key_path if site else '~/.ssh/id_rsa' }}"
+                       placeholder="~/.ssh/id_rsa">
+            </div>
         </div>
 
         <div class="mb-3">
@@ -92,11 +134,40 @@
 </div>
 
 <script>
+/* ── Protocol-aware field visibility ──────────────────────────────────── */
+function toggleProtocol() {
+    var proto = document.getElementById("protocol").value;
+
+    /* Which groups are visible for each protocol:
+       ssh1/ssh2  : network + username + auth
+       local      : (nothing)
+       raw        : network
+       telnet     : network + username
+       serial     : serial
+    */
+    var showNetwork  = ["ssh2", "ssh1", "raw", "telnet"].indexOf(proto) !== -1;
+    var showSerial   = proto === "serial";
+    var showUsername  = ["ssh2", "ssh1", "telnet"].indexOf(proto) !== -1;
+    var showAuth     = ["ssh2", "ssh1"].indexOf(proto) !== -1;
+
+    document.getElementById("network_group").classList.toggle("d-none", !showNetwork);
+    document.getElementById("serial_group").classList.toggle("d-none", !showSerial);
+    document.getElementById("username_group").classList.toggle("d-none", !showUsername);
+    document.getElementById("auth_group").classList.toggle("d-none", !showAuth);
+
+    /* Make hostname required only when visible */
+    document.getElementById("hostname").required = showNetwork;
+}
+
+/* ── Auth type toggle (password vs key) ───────────────────────────────── */
 function toggleAuth() {
     var isKey = document.getElementById("auth_key").checked;
     document.getElementById("password_group").classList.toggle("d-none", isKey);
     document.getElementById("key_group").classList.toggle("d-none", !isKey);
 }
+
+/* Initialise on page load */
+toggleProtocol();
 toggleAuth();
 </script>
 {% endblock %}

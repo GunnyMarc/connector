@@ -1,4 +1,4 @@
-"""SSH and SFTP connection routes."""
+"""Connection routes for all protocols (SSH, SFTP, local, raw, telnet, serial)."""
 
 from __future__ import annotations
 
@@ -70,30 +70,31 @@ def quick_connect():
     return redirect(url_for("sites.index"))
 
 
-# ── SSH — native terminal launch ─────────────────────────────────────────────
+# ── Connect — native terminal launch (all protocols) ─────────────────────────
 
 
 @connections_bp.route("/sites/<site_id>/ssh", methods=["GET", "POST"])
 def ssh(site_id: str):
-    """Show SSH connection details or launch a native terminal session."""
+    """Show connection details or launch a native terminal session.
+
+    Handles all protocols (ssh1, ssh2, local, raw, telnet, serial).
+    The route path is kept as ``/ssh`` for backward compatibility.
+    """
     site = _storage().get_site(site_id)
     if not site:
         flash("Site not found.", "danger")
         return redirect(url_for("sites.index"))
 
     info = _platform_info()
+    protocol = getattr(site, "protocol", "ssh2")
+    protocol_label = getattr(site, "protocol_label", "SSH2")
 
     if request.method == "POST":
         try:
-            _terminal().launch_ssh(
-                hostname=site.hostname,
-                port=site.port,
-                username=site.username,
-                key_path=site.key_path if site.auth_type == "key" else "",
-                password=site.password if site.auth_type == "password" else "",
-            )
+            _terminal().launch_session(site)
             flash(
-                f"SSH session opened in {info.terminal} for '{site.name}'.",
+                f"{protocol_label} session opened in {info.terminal}"
+                f" for '{site.name}'.",
                 "success",
             )
         except RuntimeError as exc:

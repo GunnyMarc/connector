@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from src.models.site import Site
+from src.models.site import PROTOCOL_LABELS, PROTOCOLS, Site
 
 
 class TestSiteCreation:
@@ -106,3 +106,87 @@ class TestMaskedPassword:
         """Empty password returns empty string."""
         site = Site(name="X", hostname="x.com", password="")
         assert site.masked_password() == ""
+
+
+class TestProtocolFields:
+    """Test protocol-related fields and properties."""
+
+    def test_default_protocol_is_ssh2(self) -> None:
+        """New sites default to ssh2 protocol."""
+        site = Site(name="S", hostname="h.com")
+        assert site.protocol == "ssh2"
+
+    def test_default_serial_fields(self) -> None:
+        """Serial fields have sensible defaults."""
+        site = Site(name="S", hostname="h.com")
+        assert site.serial_port == ""
+        assert site.serial_baud == 9600
+
+    def test_protocol_label(self) -> None:
+        """protocol_label returns the human-readable name."""
+        for proto, label in PROTOCOL_LABELS.items():
+            site = Site(name="S", hostname="h.com", protocol=proto)
+            assert site.protocol_label == label
+
+    def test_is_ssh_true_for_ssh_protocols(self) -> None:
+        """is_ssh is True for ssh1 and ssh2."""
+        for proto in ("ssh1", "ssh2"):
+            site = Site(name="S", hostname="h.com", protocol=proto)
+            assert site.is_ssh is True
+
+    def test_is_ssh_false_for_non_ssh_protocols(self) -> None:
+        """is_ssh is False for local, raw, telnet, serial."""
+        for proto in ("local", "raw", "telnet", "serial"):
+            site = Site(name="S", hostname="h.com", protocol=proto)
+            assert site.is_ssh is False
+
+    def test_is_network_true_for_network_protocols(self) -> None:
+        """is_network is True for ssh1, ssh2, raw, telnet."""
+        for proto in ("ssh1", "ssh2", "raw", "telnet"):
+            site = Site(name="S", hostname="h.com", protocol=proto)
+            assert site.is_network is True
+
+    def test_is_network_false_for_non_network_protocols(self) -> None:
+        """is_network is False for local, serial."""
+        for proto in ("local", "serial"):
+            site = Site(name="S", hostname="h.com", protocol=proto)
+            assert site.is_network is False
+
+    def test_serial_site_creation(self) -> None:
+        """Serial site can be created with serial-specific fields."""
+        site = Site(
+            name="My Serial",
+            hostname="",
+            protocol="serial",
+            serial_port="/dev/ttyUSB0",
+            serial_baud=115200,
+        )
+        assert site.protocol == "serial"
+        assert site.serial_port == "/dev/ttyUSB0"
+        assert site.serial_baud == 115200
+
+    def test_protocol_round_trip(self) -> None:
+        """Protocol and serial fields survive to_dict -> from_dict."""
+        site = Site(
+            name="S",
+            hostname="",
+            protocol="serial",
+            serial_port="/dev/ttyS0",
+            serial_baud=57600,
+        )
+        restored = Site.from_dict(site.to_dict())
+        assert restored.protocol == "serial"
+        assert restored.serial_port == "/dev/ttyS0"
+        assert restored.serial_baud == 57600
+
+    def test_protocol_constants(self) -> None:
+        """PROTOCOLS tuple contains all expected protocols."""
+        assert set(PROTOCOLS) == {"ssh2", "ssh1", "local", "raw", "telnet", "serial"}
+
+    def test_old_data_gets_default_protocol(self) -> None:
+        """Data without a protocol field defaults to ssh2 (backward compat)."""
+        data = {"name": "Old", "hostname": "old.com", "port": 22}
+        site = Site.from_dict(data)
+        assert site.protocol == "ssh2"
+        assert site.serial_port == ""
+        assert site.serial_baud == 9600

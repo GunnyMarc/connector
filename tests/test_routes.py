@@ -242,3 +242,203 @@ class TestSFTPRoute:
         resp = client.get(f"/sites/{site_id}/sftp")
         # Should render (200) with an error message, not crash
         assert resp.status_code == 200
+
+
+# ── Protocol-aware routes ─────────────────────────────────────────────────────
+
+
+def _create_protocol_site(app, protocol: str, **kwargs) -> str:
+    """Insert a site with the given protocol and return its ID."""
+    storage: SiteStorage = app.config["STORAGE"]
+    defaults = {
+        "name": f"{protocol} test",
+        "hostname": "10.0.0.1",
+        "port": 22,
+        "username": "root",
+        "auth_type": "password",
+        "password": "",
+        "protocol": protocol,
+        "id": f"proto-{protocol}-id",
+    }
+    defaults.update(kwargs)
+    site = Site(**defaults)
+    storage.create_site(site)
+    return site.id
+
+
+class TestProtocolRoutes:
+    """Test protocol-aware behaviour across routes."""
+
+    def test_create_local_shell_site(self, app, client: FlaskClient) -> None:
+        """POST /sites/new with protocol=local creates a Local Shell site."""
+        resp = client.post(
+            "/sites/new",
+            data={
+                "name": "My Shell",
+                "hostname": "",
+                "port": "22",
+                "protocol": "local",
+            },
+            follow_redirects=True,
+        )
+        assert resp.status_code == 200
+        storage: SiteStorage = app.config["STORAGE"]
+        sites = storage.list_sites()
+        assert len(sites) == 1
+        assert sites[0].protocol == "local"
+
+    def test_create_serial_site(self, app, client: FlaskClient) -> None:
+        """POST /sites/new with protocol=serial stores serial fields."""
+        resp = client.post(
+            "/sites/new",
+            data={
+                "name": "Serial Device",
+                "hostname": "",
+                "port": "22",
+                "protocol": "serial",
+                "serial_port": "/dev/ttyUSB0",
+                "serial_baud": "115200",
+            },
+            follow_redirects=True,
+        )
+        assert resp.status_code == 200
+        storage: SiteStorage = app.config["STORAGE"]
+        site = storage.list_sites()[0]
+        assert site.protocol == "serial"
+        assert site.serial_port == "/dev/ttyUSB0"
+        assert site.serial_baud == 115200
+
+    def test_create_telnet_site(self, app, client: FlaskClient) -> None:
+        """POST /sites/new with protocol=telnet creates a Telnet site."""
+        resp = client.post(
+            "/sites/new",
+            data={
+                "name": "Telnet Switch",
+                "hostname": "switch.local",
+                "port": "23",
+                "protocol": "telnet",
+                "username": "admin",
+            },
+            follow_redirects=True,
+        )
+        assert resp.status_code == 200
+        storage: SiteStorage = app.config["STORAGE"]
+        site = storage.list_sites()[0]
+        assert site.protocol == "telnet"
+        assert site.hostname == "switch.local"
+
+    def test_create_raw_site(self, app, client: FlaskClient) -> None:
+        """POST /sites/new with protocol=raw creates a Raw TCP site."""
+        resp = client.post(
+            "/sites/new",
+            data={
+                "name": "Raw TCP",
+                "hostname": "10.0.0.5",
+                "port": "4000",
+                "protocol": "raw",
+            },
+            follow_redirects=True,
+        )
+        assert resp.status_code == 200
+        storage: SiteStorage = app.config["STORAGE"]
+        site = storage.list_sites()[0]
+        assert site.protocol == "raw"
+        assert site.port == 4000
+
+    def test_edit_changes_protocol(self, app, client: FlaskClient) -> None:
+        """POST edit can change a site's protocol."""
+        site_id = _create_test_site(app)
+        resp = client.post(
+            f"/sites/{site_id}/edit",
+            data={
+                "name": "Route Test",
+                "hostname": "",
+                "port": "22",
+                "protocol": "local",
+            },
+            follow_redirects=True,
+        )
+        assert resp.status_code == 200
+        storage: SiteStorage = app.config["STORAGE"]
+        site = storage.get_site(site_id)
+        assert site.protocol == "local"
+
+    def test_duplicate_preserves_protocol(self, app, client: FlaskClient) -> None:
+        """Duplicating a site preserves its protocol."""
+        site_id = _create_protocol_site(
+            app, "serial", serial_port="/dev/ttyS0", serial_baud=57600,
+        )
+        resp = client.post(
+            f"/sites/{site_id}/duplicate",
+            follow_redirects=True,
+        )
+        assert resp.status_code == 200
+        storage: SiteStorage = app.config["STORAGE"]
+        sites = storage.list_sites()
+        copy = [s for s in sites if s.name.endswith("(Copy)")][0]
+        assert copy.protocol == "serial"
+        assert copy.serial_port == "/dev/ttyS0"
+        assert copy.serial_baud == 57600
+
+    def test_ssh_page_shows_protocol_label(
+        self, app, client: FlaskClient,
+    ) -> None:
+        """GET /sites/<id>/ssh shows the protocol label in the page."""
+        site_id = _create_protocol_site(app, "telnet", hostname="switch.local")
+        resp = client.get(f"/sites/{site_id}/ssh")
+        assert resp.status_code == 200
+        assert b"Telnet" in resp.data
+
+    def test_index_shows_protocol_badge(
+        self, app, client: FlaskClient,
+    ) -> None:
+        """Dashboard detail panel shows a protocol badge."""
+        site_id = _create_protocol_site(app, "raw", hostname="10.0.0.1")
+        resp = client.get(f"/?site={site_id}")
+        assert resp.status_code == 200
+        assert b"Raw" in resp.data
+
+    def test_index_local_shell_no_sftp_button(
+        self, app, client: FlaskClient,
+    ) -> None:
+        """Local Shell sessions should not show the SFTP button."""
+        site_id = _create_protocol_site(app, "local")
+        resp = client.get(f"/?site={site_id}")
+        assert resp.status_code == 200
+        assert b"SFTP" not in resp.data
+
+    def test_index_ssh_site_shows_sftp_button(
+        self, app, client: FlaskClient,
+    ) -> None:
+        """SSH sessions should show the SFTP button."""
+        site_id = _create_protocol_site(app, "ssh2", hostname="server.com")
+        resp = client.get(f"/?site={site_id}")
+        assert resp.status_code == 200
+        assert b"SFTP" in resp.data
+
+    def test_default_protocol_when_omitted(
+        self, app, client: FlaskClient,
+    ) -> None:
+        """Omitting protocol field from POST defaults to ssh2."""
+        resp = client.post(
+            "/sites/new",
+            data={
+                "name": "No Proto",
+                "hostname": "host.com",
+                "port": "22",
+            },
+            follow_redirects=True,
+        )
+        assert resp.status_code == 200
+        storage: SiteStorage = app.config["STORAGE"]
+        site = storage.list_sites()[0]
+        assert site.protocol == "ssh2"
+
+    def test_sidebar_shows_protocol_icon(
+        self, app, client: FlaskClient,
+    ) -> None:
+        """Sidebar uses protocol-specific icon for Local Shell."""
+        _create_protocol_site(app, "local")
+        resp = client.get("/")
+        assert resp.status_code == 200
+        assert b"bi-terminal-fill" in resp.data

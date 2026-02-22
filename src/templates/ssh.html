@@ -1,19 +1,52 @@
 {% extends "base.html" %}
-{% block title_suffix %} &mdash; SSH: {{ site.name }}{% endblock %}
+{% block title_suffix %} &mdash; {{ site.protocol_label }}: {{ site.name }}{% endblock %}
 
 {% block working_pane %}
 <div class="detail-content">
     <div class="detail-header">
-        <h2><i class="bi bi-terminal"></i> {{ site.name }}</h2>
+        <h2>
+            {# ── Protocol-specific icon ──────────────────────────── #}
+            {% if site.protocol == "local" %}
+            <i class="bi bi-terminal-fill"></i>
+            {% elif site.protocol == "serial" %}
+            <i class="bi bi-usb-drive-fill"></i>
+            {% elif site.protocol == "telnet" %}
+            <i class="bi bi-ethernet"></i>
+            {% elif site.protocol == "raw" %}
+            <i class="bi bi-hdd-network"></i>
+            {% else %}
+            <i class="bi bi-terminal"></i>
+            {% endif %}
+            {{ site.name }}
+        </h2>
+        {# ── Subtitle line ───────────────────────────────────────── #}
         <span class="text-muted font-monospace" style="font-size:.8rem;">
-            {{ site.username }}@{{ site.hostname }}:{{ site.port }}
+            {% if site.protocol == "local" %}
+            Local Shell
+            {% elif site.protocol == "serial" %}
+            {{ site.serial_port or '/dev/ttyUSB0' }} @ {{ site.serial_baud }} baud
+            {% elif site.is_network %}
+            {% if site.username %}{{ site.username }}@{% endif %}{{ site.hostname }}:{{ site.port }}
+            {% endif %}
         </span>
     </div>
 
     <table class="table table-sm detail-table">
+        <tr><th>Protocol</th><td><span class="badge bg-primary">{{ site.protocol_label }}</span></td></tr>
+
+        {# ── Network fields ──────────────────────────────────────── #}
+        {% if site.is_network %}
         <tr><th>Host</th><td class="font-monospace">{{ site.hostname }}</td></tr>
         <tr><th>Port</th><td class="font-monospace">{{ site.port }}</td></tr>
+        {% endif %}
+
+        {# ── Username (SSH + Telnet) ─────────────────────────────── #}
+        {% if site.protocol in ('ssh1', 'ssh2', 'telnet') %}
         <tr><th>Username</th><td class="font-monospace">{{ site.username }}</td></tr>
+        {% endif %}
+
+        {# ── SSH auth details ────────────────────────────────────── #}
+        {% if site.is_ssh %}
         <tr>
             <th>Auth</th>
             <td>
@@ -32,16 +65,36 @@
         {% if site.auth_type == "key" and site.key_path %}
         <tr><th>Key</th><td class="font-monospace">{{ site.key_path }}</td></tr>
         {% endif %}
+        {% endif %}
+
+        {# ── Serial fields ───────────────────────────────────────── #}
+        {% if site.protocol == "serial" %}
+        <tr><th>Serial Port</th><td class="font-monospace">{{ site.serial_port or '/dev/ttyUSB0' }}</td></tr>
+        <tr><th>Baud Rate</th><td class="font-monospace">{{ site.serial_baud }}</td></tr>
+        {% endif %}
+
         <tr><th>Terminal</th><td>{{ platform_info.terminal }} ({{ platform_info.system_label }})</td></tr>
     </table>
 
     <form method="POST" class="mb-3">
         <button type="submit" class="btn btn-success">
-            <i class="bi bi-terminal"></i> Open SSH in {{ platform_info.terminal }}
+            <i class="bi bi-terminal"></i>
+            {% if site.protocol == "local" %}
+            Open Shell in {{ platform_info.terminal }}
+            {% elif site.is_ssh %}
+            Open SSH in {{ platform_info.terminal }}
+            {% elif site.protocol == "serial" %}
+            Open Serial in {{ platform_info.terminal }}
+            {% elif site.protocol == "telnet" %}
+            Open Telnet in {{ platform_info.terminal }}
+            {% elif site.protocol == "raw" %}
+            Open Connection in {{ platform_info.terminal }}
+            {% endif %}
         </button>
     </form>
 
-    {% if site.auth_type == "password" %}
+    {# ── SSH password hints ──────────────────────────────────────────── #}
+    {% if site.is_ssh and site.auth_type == "password" %}
         {% if site.password and platform_info.has_sshpass %}
         <div class="alert alert-success py-2" style="font-size:.82rem;">
             <i class="bi bi-shield-check"></i>
@@ -64,6 +117,29 @@
             No password stored &mdash; you will be prompted in the terminal.
         </div>
         {% endif %}
+    {% endif %}
+
+    {# ── Serial hint ─────────────────────────────────────────────────── #}
+    {% if site.protocol == "serial" %}
+    <div class="alert alert-info py-2" style="font-size:.82rem;">
+        <i class="bi bi-info-circle"></i>
+        Uses <code>screen {{ site.serial_port or '/dev/ttyUSB0' }} {{ site.serial_baud }}</code>.
+        Make sure you have read/write permission on the serial device.
+    </div>
+    {% endif %}
+
+    {# ── Raw / Telnet hint ───────────────────────────────────────────── #}
+    {% if site.protocol == "raw" %}
+    <div class="alert alert-info py-2" style="font-size:.82rem;">
+        <i class="bi bi-info-circle"></i>
+        Uses <code>nc {{ site.hostname }} {{ site.port }}</code> for a raw TCP connection.
+    </div>
+    {% endif %}
+    {% if site.protocol == "telnet" %}
+    <div class="alert alert-info py-2" style="font-size:.82rem;">
+        <i class="bi bi-info-circle"></i>
+        Uses <code>telnet{% if site.username %} -l {{ site.username }}{% endif %} {{ site.hostname }}{% if site.port != 23 %} {{ site.port }}{% endif %}</code>.
+    </div>
     {% endif %}
 
     <a href="{{ url_for('sites.index', site=site.id) }}" class="btn btn-sm btn-outline-secondary">

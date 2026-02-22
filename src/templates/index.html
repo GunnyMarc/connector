@@ -6,21 +6,46 @@
 <div class="detail-content">
     <div class="detail-header">
         <h2>{{ active_site.name }}</h2>
+        <span class="badge bg-primary">{{ active_site.protocol_label }}</span>
+        {% if active_site.is_ssh %}
         <span class="badge bg-{{ 'info' if active_site.auth_type == 'key' else 'secondary' }}">
             {{ active_site.auth_type }}
         </span>
+        {% endif %}
     </div>
 
     <table class="table table-sm detail-table">
+        {# ── Network protocols: host / port ─────────────────────── #}
+        {% if active_site.is_network %}
         <tr><th>Host</th><td class="font-monospace">{{ active_site.hostname }}</td></tr>
         <tr><th>Port</th><td class="font-monospace">{{ active_site.port }}</td></tr>
+        {% endif %}
+
+        {# ── Username (SSH + Telnet) ─────────────────────────────── #}
+        {% if active_site.protocol in ('ssh1', 'ssh2', 'telnet') %}
         <tr>
             <th>Username</th>
             <td class="font-monospace">{{ active_site.username or '(none)' }}</td>
         </tr>
-        {% if active_site.auth_type == "key" and active_site.key_path %}
+        {% endif %}
+
+        {# ── SSH key path ────────────────────────────────────────── #}
+        {% if active_site.is_ssh and active_site.auth_type == "key" and active_site.key_path %}
         <tr><th>Key Path</th><td class="font-monospace">{{ active_site.key_path }}</td></tr>
         {% endif %}
+
+        {# ── Serial fields ───────────────────────────────────────── #}
+        {% if active_site.protocol == "serial" %}
+        <tr><th>Serial Port</th><td class="font-monospace">{{ active_site.serial_port or '(not set)' }}</td></tr>
+        <tr><th>Baud Rate</th><td class="font-monospace">{{ active_site.serial_baud }}</td></tr>
+        {% endif %}
+
+        {# ── Local Shell ─────────────────────────────────────────── #}
+        {% if active_site.protocol == "local" %}
+        <tr><th>Type</th><td>Opens a local terminal shell session</td></tr>
+        {% endif %}
+
+        {# ── Notes ───────────────────────────────────────────────── #}
         {% if active_site.notes %}
         <tr><th>Notes</th><td>{{ active_site.notes }}</td></tr>
         {% endif %}
@@ -31,13 +56,22 @@
               action="{{ url_for('connections.ssh', site_id=active_site.id) }}"
               class="d-inline">
             <button type="submit" class="btn btn-success">
-                <i class="bi bi-terminal"></i> SSH ({{ platform_info.terminal }})
+                <i class="bi bi-terminal"></i>
+                {% if active_site.protocol == "local" %}
+                Open Shell ({{ platform_info.terminal }})
+                {% elif active_site.is_ssh %}
+                SSH ({{ platform_info.terminal }})
+                {% else %}
+                Connect ({{ platform_info.terminal }})
+                {% endif %}
             </button>
         </form>
+        {% if active_site.is_ssh %}
         <a href="{{ url_for('connections.sftp', site_id=active_site.id) }}"
            class="btn btn-info">
             <i class="bi bi-folder"></i> SFTP
         </a>
+        {% endif %}
         <a href="{{ url_for('sites.edit', site_id=active_site.id) }}"
            class="btn btn-outline-warning">
             <i class="bi bi-pencil"></i> Edit
