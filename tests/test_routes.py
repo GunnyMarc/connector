@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+from unittest.mock import patch
 
 from flask.testing import FlaskClient
 
@@ -829,3 +830,82 @@ class TestImport:
         resp = _upload_json(client, payload)
         assert resp.status_code == 200
         assert b"No sessions found" in resp.data
+
+
+# ── Browse Key ────────────────────────────────────────────────────────────────
+
+
+class TestBrowseKey:
+    """Test POST /api/browse-key (native file dialog)."""
+
+    def test_returns_json(self, client: FlaskClient) -> None:
+        """Endpoint returns JSON with a 'path' key."""
+        with patch("src.routes.sites.subprocess.run") as mock_run:
+            mock_run.return_value.returncode = 1  # cancelled
+            mock_run.return_value.stdout = ""
+            resp = client.post("/api/browse-key")
+        assert resp.status_code == 200
+        assert resp.content_type.startswith("application/json")
+        data = json.loads(resp.data)
+        assert "path" in data
+
+    def test_returns_selected_path_macos(
+        self, app, client: FlaskClient,
+    ) -> None:
+        """On macOS, returns the path chosen via osascript."""
+        app.config["PLATFORM_INFO"].system = "Darwin"
+        with patch("src.routes.sites.subprocess.run") as mock_run:
+            mock_run.return_value.returncode = 0
+            mock_run.return_value.stdout = "/Users/me/.ssh/id_ed25519\n"
+            resp = client.post("/api/browse-key")
+        data = json.loads(resp.data)
+        assert data["path"] == "/Users/me/.ssh/id_ed25519"
+
+    def test_cancelled_dialog_returns_empty(
+        self, app, client: FlaskClient,
+    ) -> None:
+        """When the user cancels the dialog, path is empty."""
+        app.config["PLATFORM_INFO"].system = "Darwin"
+        with patch("src.routes.sites.subprocess.run") as mock_run:
+            mock_run.return_value.returncode = 1
+            mock_run.return_value.stdout = ""
+            resp = client.post("/api/browse-key")
+        data = json.loads(resp.data)
+        assert data["path"] == ""
+
+    def test_returns_selected_path_linux(
+        self, app, client: FlaskClient,
+    ) -> None:
+        """On Linux with zenity, returns the selected path."""
+        app.config["PLATFORM_INFO"].system = "Linux"
+        with patch("src.routes.sites.shutil.which", return_value="/usr/bin/zenity"):
+            with patch("src.routes.sites.subprocess.run") as mock_run:
+                mock_run.return_value.returncode = 0
+                mock_run.return_value.stdout = "/home/user/.ssh/id_rsa\n"
+                resp = client.post("/api/browse-key")
+        data = json.loads(resp.data)
+        assert data["path"] == "/home/user/.ssh/id_rsa"
+
+    def test_timeout_returns_empty(
+        self, app, client: FlaskClient,
+    ) -> None:
+        """Subprocess timeout returns empty path gracefully."""
+        import subprocess as sp
+
+        app.config["PLATFORM_INFO"].system = "Darwin"
+        with patch(
+            "src.routes.sites.subprocess.run",
+            side_effect=sp.TimeoutExpired("osascript", 120),
+        ):
+            resp = client.post("/api/browse-key")
+        data = json.loads(resp.data)
+        assert data["path"] == ""
+
+    def test_unknown_platform_returns_empty(
+        self, app, client: FlaskClient,
+    ) -> None:
+        """Unsupported platform returns empty path without error."""
+        app.config["PLATFORM_INFO"].system = "FreeBSD"
+        resp = client.post("/api/browse-key")
+        data = json.loads(resp.data)
+        assert data["path"] == ""

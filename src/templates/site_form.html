@@ -100,10 +100,16 @@
 
             <div class="mb-3 d-none" id="key_group">
                 <label for="key_path" class="form-label">SSH Key Path</label>
-                <input type="text" class="form-control form-control-sm" id="key_path"
-                       name="key_path"
-                       value="{{ site.key_path if site else '~/.ssh/id_rsa' }}"
-                       placeholder="~/.ssh/id_rsa">
+                <div class="input-group input-group-sm">
+                    <input type="text" class="form-control form-control-sm" id="key_path"
+                           name="key_path"
+                           value="{{ site.key_path if site else '~/.ssh/id_rsa' }}"
+                           placeholder="~/.ssh/id_rsa">
+                    <button type="button" class="btn btn-outline-secondary" id="browse_key_btn"
+                            title="Browse for SSH key file">
+                        <i class="bi bi-folder2-open"></i> Browse
+                    </button>
+                </div>
             </div>
         </div>
 
@@ -166,6 +172,26 @@ function toggleAuth() {
     document.getElementById("password_group").classList.toggle("d-none", isKey);
     document.getElementById("key_group").classList.toggle("d-none", !isKey);
 }
+
+/* ── Browse for SSH key file ───────────────────────────────────────────── */
+document.getElementById("browse_key_btn").addEventListener("click", function () {
+    var btn = this;
+    btn.disabled = true;
+    btn.innerHTML = '<i class="bi bi-hourglass-split"></i> Waiting…';
+
+    fetch("/api/browse-key", { method: "POST" })
+        .then(function (resp) { return resp.json(); })
+        .then(function (data) {
+            if (data.path) {
+                document.getElementById("key_path").value = data.path;
+            }
+        })
+        .catch(function () { /* dialog cancelled or error — ignore */ })
+        .finally(function () {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-folder2-open"></i> Browse';
+        });
+});
 
 /* Initialise on page load */
 toggleProtocol();

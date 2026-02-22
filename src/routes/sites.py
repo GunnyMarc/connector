@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import os
+import shutil
+import subprocess
+
 from flask import (
     Blueprint,
     current_app,
     flash,
+    jsonify,
     redirect,
     render_template,
     request,
@@ -143,3 +148,73 @@ def delete(site_id: str):
         flash("Site not found.", "danger")
 
     return redirect(url_for("sites.index"))
+
+
+# ── File browser API ──────────────────────────────────────────────────────────
+
+
+@sites_bp.route("/api/browse-key", methods=["POST"])
+def browse_key():
+    """Open a native file dialog to select an SSH key file.
+
+    Uses platform-specific tools (``osascript`` on macOS, ``zenity`` or
+    ``kdialog`` on Linux) to present a file chooser starting in ``~/.ssh``.
+
+    Returns JSON ``{"path": "/path/to/key"}`` on success, or
+    ``{"path": ""}`` if the user cancelled or an error occurred.
+    """
+    platform_info = current_app.config.get("PLATFORM_INFO")
+    system = platform_info.system if platform_info else "unknown"
+
+    initial_dir = os.path.expanduser("~/.ssh")
+    if not os.path.isdir(initial_dir):
+        initial_dir = os.path.expanduser("~")
+
+    selected_path = ""
+
+    try:
+        if system == "Darwin":
+            script = (
+                f'set d to POSIX file "{initial_dir}" as alias\n'
+                "POSIX path of (choose file with prompt "
+                '"Select SSH Key" default location d)'
+            )
+            result = subprocess.run(
+                ["osascript", "-e", script],
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            if result.returncode == 0:
+                selected_path = result.stdout.strip()
+
+        elif system == "Linux":
+            for cmd in [
+                [
+                    "zenity",
+                    "--file-selection",
+                    "--title=Select SSH Key",
+                    f"--filename={initial_dir}/",
+                ],
+                [
+                    "kdialog",
+                    "--getopenfilename",
+                    initial_dir,
+                    "All Files (*)",
+                ],
+            ]:
+                if shutil.which(cmd[0]):
+                    result = subprocess.run(
+                        cmd,
+                        capture_output=True,
+                        text=True,
+                        timeout=120,
+                    )
+                    if result.returncode == 0:
+                        selected_path = result.stdout.strip()
+                    break
+
+    except (subprocess.TimeoutExpired, OSError):
+        pass
+
+    return jsonify({"path": selected_path})
