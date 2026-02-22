@@ -267,9 +267,16 @@ body.app-layout {
 .session-item:hover { background: #eef3fa; color: #111; }
 .session-item.active { background: #d0e1f9; color: #000; font-weight: 600; }
 
-/* Items inside folders are indented further */
-.folder-children .session-item {
+/* Items inside folders — indentation is set inline via depth.
+   The fallback below handles the base case. */
+.folder-children > .session-item {
     padding-left: 2.3rem;
+}
+
+/* Nested folder groups inherit parent indentation via inline styles.
+   Ensure nested folder-children sit flush below their header. */
+.folder-children > .folder-group {
+    margin-left: 0;
 }
 
 .session-name {

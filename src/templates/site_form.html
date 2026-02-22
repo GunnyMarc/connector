@@ -118,7 +118,8 @@
             <select class="form-control form-control-sm" id="folder" name="folder">
                 <option value=""{{ ' selected' if not site or not site.folder }}>(None — root level)</option>
                 {% for fname in sidebar_folders %}
-                <option value="{{ fname }}"{{ ' selected' if site and site.folder == fname }}>{{ fname }}</option>
+                {% set depth = fname.split('/') | length - 1 %}
+                <option value="{{ fname }}"{{ ' selected' if site and site.folder == fname }}>{{ '—' * depth }} {{ fname.split('/')[-1] }}</option>
                 {% endfor %}
             </select>
         </div>

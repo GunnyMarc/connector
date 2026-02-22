@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import OrderedDict
+from typing import Any
 
 from flask import Flask, request
 
@@ -15,6 +16,63 @@ from src.services.crypto_service import CryptoService
 from src.services.settings_service import SettingsService
 from src.services.storage import SiteStorage
 from src.services.terminal_service import TerminalService, detect_platform
+
+
+# ── Folder tree builder ───────────────────────────────────────────────────────
+
+# Separator used in folder paths (e.g. "AWS/Production").
+FOLDER_SEP = "/"
+
+
+def _build_folder_tree(
+    folder_paths: list[str],
+    all_sites: list,
+) -> list[dict[str, Any]]:
+    """Build a recursive folder tree from a flat list of folder paths.
+
+    Each node is a dict::
+
+        {
+            "name":     "Production",   # display label (last segment)
+            "path":     "AWS/Production",  # full path (used as key)
+            "children": [...],            # sub-folder nodes
+            "sites":    [Site, ...],      # sites assigned to this folder
+        }
+
+    *folder_paths* is ordered; the tree preserves that order at each level.
+
+    Sites are assigned to the **deepest matching** folder path.  Sites whose
+    ``folder`` value does not match any known path are returned separately by
+    the caller (they belong to root).
+    """
+    # Map full path → node  (insertion-order preserved)
+    nodes: OrderedDict[str, dict] = OrderedDict()
+    for path in folder_paths:
+        nodes[path] = {
+            "name": path.rsplit(FOLDER_SEP, 1)[-1],
+            "path": path,
+            "children": [],
+            "sites": [],
+        }
+
+    # Assign sites to their folder node
+    site_index: set[str] = set()
+    for site in all_sites:
+        if site.folder and site.folder in nodes:
+            nodes[site.folder]["sites"].append(site)
+            site_index.add(site.id)
+
+    # Build tree: attach children to parents.  A folder "A/B" is a child
+    # of "A" only if "A" also exists in the nodes map.
+    root_nodes: list[dict] = []
+    for path, node in nodes.items():
+        parent_path = path.rsplit(FOLDER_SEP, 1)[0] if FOLDER_SEP in path else ""
+        if parent_path and parent_path in nodes:
+            nodes[parent_path]["children"].append(node)
+        else:
+            root_nodes.append(node)
+
+    return root_nodes
 
 
 def create_app() -> Flask:
@@ -58,23 +116,26 @@ def create_app() -> Flask:
         global_settings = settings_svc.get_all()
         folder_names: list[str] = global_settings.get("folders", [])
 
-        # Ordered dict: folder name → list of sites in that folder
+        # Build the recursive folder tree for the sidebar
+        folder_tree = _build_folder_tree(folder_names, all_sites)
+
+        # Flat folders map (still used by the site form dropdown + legacy)
         folders_map: OrderedDict[str, list] = OrderedDict()
         for fname in folder_names:
             folders_map[fname] = []
-
-        # Root sites (no folder assigned)
-        root_sites = []
         for site in all_sites:
             if site.folder and site.folder in folders_map:
                 folders_map[site.folder].append(site)
-            else:
-                root_sites.append(site)
+
+        # Root sites (no folder or unknown folder)
+        assigned = {s.id for s in all_sites if s.folder and s.folder in folders_map}
+        root_sites = [s for s in all_sites if s.id not in assigned]
 
         return {
             "sidebar_sites": all_sites,
             "sidebar_root_sites": root_sites,
             "sidebar_folders": folders_map,
+            "sidebar_folder_tree": folder_tree,
             "active_site": active_site,
             "platform_info": platform_info,
         }

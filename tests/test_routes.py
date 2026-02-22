@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import io
+import json
+
 from flask.testing import FlaskClient
 
 from src.models.site import Site
+from src.services.settings_service import SettingsService
 from src.services.storage import SiteStorage
 
 
@@ -442,3 +446,386 @@ class TestProtocolRoutes:
         resp = client.get("/")
         assert resp.status_code == 200
         assert b"bi-terminal-fill" in resp.data
+
+
+# ── Export ────────────────────────────────────────────────────────────────────
+
+
+def _create_export_site(app, **overrides) -> str:
+    """Insert a site with sensible defaults for export tests; return its ID."""
+    storage: SiteStorage = app.config["STORAGE"]
+    defaults = {
+        "name": "Export Me",
+        "hostname": "export.example.com",
+        "port": 22,
+        "username": "deployer",
+        "auth_type": "password",
+        "password": "supersecret",
+        "key_path": "~/.ssh/id_rsa",
+        "folder": "Production",
+        "protocol": "ssh2",
+    }
+    defaults.update(overrides)
+    site = Site(**defaults)
+    storage.create_site(site)
+    return site.id
+
+
+class TestExport:
+    """Test GET /settings/export."""
+
+    def test_export_returns_json(self, app, client: FlaskClient) -> None:
+        """Export response has application/json mimetype."""
+        _create_export_site(app)
+        resp = client.get("/settings/export")
+        assert resp.status_code == 200
+        assert resp.mimetype == "application/json"
+
+    def test_export_attachment_filename(
+        self, app, client: FlaskClient,
+    ) -> None:
+        """Export sets Content-Disposition with a timestamp filename."""
+        _create_export_site(app)
+        resp = client.get("/settings/export")
+        cd = resp.headers.get("Content-Disposition", "")
+        assert "attachment" in cd
+        assert "connector_export_" in cd
+        assert cd.endswith('.json"')
+
+    def test_export_has_connector_flag(
+        self, app, client: FlaskClient,
+    ) -> None:
+        """Export payload contains ``connector_export: true`` and version."""
+        _create_export_site(app)
+        resp = client.get("/settings/export")
+        data = json.loads(resp.data)
+        assert data["connector_export"] is True
+        assert data["version"] == 1
+        assert "exported_at" in data
+
+    def test_export_strips_password(self, app, client: FlaskClient) -> None:
+        """Exported sites must not include the password field."""
+        _create_export_site(app, password="topsecret")
+        resp = client.get("/settings/export")
+        data = json.loads(resp.data)
+        assert len(data["sites"]) == 1
+        assert "password" not in data["sites"][0]
+
+    def test_export_strips_key_path(self, app, client: FlaskClient) -> None:
+        """Exported sites must not include the key_path field."""
+        _create_export_site(app, key_path="/home/user/.ssh/id_rsa")
+        resp = client.get("/settings/export")
+        data = json.loads(resp.data)
+        assert "key_path" not in data["sites"][0]
+
+    def test_export_preserves_username(
+        self, app, client: FlaskClient,
+    ) -> None:
+        """Exported sites preserve the username field."""
+        _create_export_site(app, username="webadmin")
+        resp = client.get("/settings/export")
+        data = json.loads(resp.data)
+        assert data["sites"][0]["username"] == "webadmin"
+
+    def test_export_preserves_hostname_and_protocol(
+        self, app, client: FlaskClient,
+    ) -> None:
+        """Exported sites preserve hostname, protocol, and folder."""
+        _create_export_site(
+            app,
+            hostname="db.internal",
+            protocol="telnet",
+            folder="Infra",
+        )
+        resp = client.get("/settings/export")
+        data = json.loads(resp.data)
+        site = data["sites"][0]
+        assert site["hostname"] == "db.internal"
+        assert site["protocol"] == "telnet"
+        assert site["folder"] == "Infra"
+
+    def test_export_includes_folders(self, app, client: FlaskClient) -> None:
+        """Export payload contains the folders list from settings."""
+        svc: SettingsService = app.config["SETTINGS"]
+        svc.update({"folders": ["AWS", "AWS/Production", "GCP"]})
+        _create_export_site(app)
+
+        resp = client.get("/settings/export")
+        data = json.loads(resp.data)
+        assert data["folders"] == ["AWS", "AWS/Production", "GCP"]
+
+    def test_export_empty_no_sites(self, client: FlaskClient) -> None:
+        """Export with no sites returns an empty sites list."""
+        resp = client.get("/settings/export")
+        data = json.loads(resp.data)
+        assert data["sites"] == []
+        assert data["connector_export"] is True
+
+    def test_export_multiple_sites(self, app, client: FlaskClient) -> None:
+        """Export includes all sites, each without credentials."""
+        _create_export_site(app, name="Site A", id="a-id")
+        _create_export_site(app, name="Site B", id="b-id")
+        resp = client.get("/settings/export")
+        data = json.loads(resp.data)
+        assert len(data["sites"]) == 2
+        for site in data["sites"]:
+            assert "password" not in site
+            assert "key_path" not in site
+
+
+# ── Import ────────────────────────────────────────────────────────────────────
+
+
+def _make_export_payload(
+    sites: list[dict] | None = None,
+    folders: list[str] | None = None,
+) -> dict:
+    """Build a valid Connector export payload dict."""
+    return {
+        "connector_export": True,
+        "version": 1,
+        "exported_at": "2025-01-01T00:00:00Z",
+        "folders": folders or [],
+        "sites": sites or [],
+    }
+
+
+def _upload_json(client: FlaskClient, payload: dict | str):
+    """POST a JSON payload to /settings/import as a file upload."""
+    raw = payload if isinstance(payload, str) else json.dumps(payload)
+    data = {
+        "import_file": (io.BytesIO(raw.encode("utf-8")), "export.json"),
+    }
+    return client.post(
+        "/settings/import",
+        data=data,
+        content_type="multipart/form-data",
+        follow_redirects=True,
+    )
+
+
+class TestImport:
+    """Test POST /settings/import."""
+
+    def test_import_creates_sites(self, app, client: FlaskClient) -> None:
+        """Importing valid JSON creates sites in storage."""
+        payload = _make_export_payload(
+            sites=[
+                {
+                    "name": "Imported Server",
+                    "hostname": "import.host.com",
+                    "port": 22,
+                    "username": "ops",
+                    "protocol": "ssh2",
+                    "folder": "",
+                },
+            ],
+        )
+        resp = _upload_json(client, payload)
+        assert resp.status_code == 200
+
+        storage: SiteStorage = app.config["STORAGE"]
+        sites = storage.list_sites()
+        assert len(sites) == 1
+        assert sites[0].name == "Imported Server"
+        assert sites[0].hostname == "import.host.com"
+
+    def test_import_assigns_fresh_uuids(
+        self, app, client: FlaskClient,
+    ) -> None:
+        """Imported sites get new UUIDs, not the ones from the file."""
+        payload = _make_export_payload(
+            sites=[
+                {
+                    "id": "old-uuid-1234",
+                    "name": "UUID Test",
+                    "hostname": "host.com",
+                    "port": 22,
+                    "protocol": "ssh2",
+                },
+            ],
+        )
+        _upload_json(client, payload)
+
+        storage: SiteStorage = app.config["STORAGE"]
+        sites = storage.list_sites()
+        assert len(sites) == 1
+        assert sites[0].id != "old-uuid-1234"
+
+    def test_import_blanks_credentials(
+        self, app, client: FlaskClient,
+    ) -> None:
+        """Imported sites have empty password and key_path."""
+        payload = _make_export_payload(
+            sites=[
+                {
+                    "name": "Cred Test",
+                    "hostname": "host.com",
+                    "port": 22,
+                    "username": "admin",
+                    "password": "hacked-in",
+                    "key_path": "/sneaky/key",
+                    "protocol": "ssh2",
+                },
+            ],
+        )
+        _upload_json(client, payload)
+
+        storage: SiteStorage = app.config["STORAGE"]
+        site = storage.list_sites()[0]
+        assert site.password == ""
+        assert site.key_path == ""
+
+    def test_import_merges_folders(self, app, client: FlaskClient) -> None:
+        """Import merges new folders with existing ones."""
+        svc: SettingsService = app.config["SETTINGS"]
+        svc.update({"folders": ["Existing"]})
+
+        payload = _make_export_payload(
+            folders=["Existing", "New Folder", "Another"],
+        )
+        _upload_json(client, payload)
+
+        settings = svc.get_all()
+        folders = settings["folders"]
+        assert "Existing" in folders
+        assert "New Folder" in folders
+        assert "Another" in folders
+        # "Existing" should not be duplicated.
+        assert folders.count("Existing") == 1
+
+    def test_import_skips_duplicates(
+        self, app, client: FlaskClient,
+    ) -> None:
+        """Sites matching (name, hostname, protocol) are skipped."""
+        # Pre-create a site.
+        _create_export_site(
+            app,
+            name="Dup Site",
+            hostname="dup.host.com",
+            protocol="ssh2",
+        )
+
+        payload = _make_export_payload(
+            sites=[
+                {
+                    "name": "Dup Site",
+                    "hostname": "dup.host.com",
+                    "protocol": "ssh2",
+                    "port": 22,
+                },
+                {
+                    "name": "Fresh Site",
+                    "hostname": "fresh.host.com",
+                    "protocol": "ssh2",
+                    "port": 22,
+                },
+            ],
+        )
+        resp = _upload_json(client, payload)
+        assert resp.status_code == 200
+
+        storage: SiteStorage = app.config["STORAGE"]
+        sites = storage.list_sites()
+        names = [s.name for s in sites]
+        assert names.count("Dup Site") == 1
+        assert "Fresh Site" in names
+        assert len(sites) == 2
+
+    def test_import_rejects_invalid_json(
+        self, client: FlaskClient,
+    ) -> None:
+        """Non-JSON file is rejected with a flash message."""
+        resp = _upload_json(client, "this is not json {{{")
+        assert resp.status_code == 200
+        assert b"Invalid JSON" in resp.data
+
+    def test_import_rejects_non_connector_file(
+        self, client: FlaskClient,
+    ) -> None:
+        """Valid JSON without connector_export flag is rejected."""
+        resp = _upload_json(client, {"some_key": "some_value"})
+        assert resp.status_code == 200
+        assert b"not a valid Connector export" in resp.data
+
+    def test_import_no_file_selected(self, client: FlaskClient) -> None:
+        """POST with no file flashes an error."""
+        resp = client.post(
+            "/settings/import",
+            data={},
+            content_type="multipart/form-data",
+            follow_redirects=True,
+        )
+        assert resp.status_code == 200
+        assert b"No file selected" in resp.data
+
+    def test_import_empty_file(self, client: FlaskClient) -> None:
+        """Empty file upload is treated as invalid JSON."""
+        data = {
+            "import_file": (io.BytesIO(b""), "empty.json"),
+        }
+        resp = client.post(
+            "/settings/import",
+            data=data,
+            content_type="multipart/form-data",
+            follow_redirects=True,
+        )
+        assert resp.status_code == 200
+        assert b"Invalid JSON" in resp.data
+
+    def test_import_preserves_username(
+        self, app, client: FlaskClient,
+    ) -> None:
+        """Imported sites keep the username from the export file."""
+        payload = _make_export_payload(
+            sites=[
+                {
+                    "name": "User Test",
+                    "hostname": "host.com",
+                    "port": 22,
+                    "username": "imported_user",
+                    "protocol": "ssh2",
+                },
+            ],
+        )
+        _upload_json(client, payload)
+
+        storage: SiteStorage = app.config["STORAGE"]
+        site = storage.list_sites()[0]
+        assert site.username == "imported_user"
+
+    def test_import_flash_summary(self, app, client: FlaskClient) -> None:
+        """Import flashes a summary with imported and skipped counts."""
+        # Pre-create a duplicate.
+        _create_export_site(
+            app, name="Already Here", hostname="h.com", protocol="ssh2",
+        )
+
+        payload = _make_export_payload(
+            sites=[
+                {
+                    "name": "Already Here",
+                    "hostname": "h.com",
+                    "protocol": "ssh2",
+                    "port": 22,
+                },
+                {
+                    "name": "New One",
+                    "hostname": "n.com",
+                    "protocol": "ssh2",
+                    "port": 22,
+                },
+            ],
+        )
+        resp = _upload_json(client, payload)
+        assert b"1 session(s) imported" in resp.data
+        assert b"1 skipped" in resp.data
+
+    def test_import_no_sessions_in_file(
+        self, client: FlaskClient,
+    ) -> None:
+        """Import file with no sites array flashes informational message."""
+        payload = _make_export_payload(sites=[])
+        resp = _upload_json(client, payload)
+        assert resp.status_code == 200
+        assert b"No sessions found" in resp.data

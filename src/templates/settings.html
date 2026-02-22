@@ -96,5 +96,36 @@
             <a href="{{ url_for('sites.index') }}" class="btn btn-sm btn-secondary">Cancel</a>
         </div>
     </form>
+
+    <hr class="border-secondary mt-4">
+
+    <!-- Import / Export -->
+    <fieldset class="mb-3">
+        <legend class="wp-legend">Import / Export</legend>
+        <p class="text-muted" style="font-size:.82rem;">
+            Export sessions to a JSON file for backup or sharing.
+            Credentials (passwords and SSH key paths) are <strong>not</strong>
+            included in the export and must be entered separately after import.
+        </p>
+
+        <div class="d-flex gap-2 mb-3">
+            <a href="{{ url_for('settings.export_sessions') }}" class="btn btn-sm btn-outline-info">
+                <i class="bi bi-download"></i> Export Sessions
+            </a>
+        </div>
+
+        <form method="POST" action="{{ url_for('settings.import_sessions') }}"
+              enctype="multipart/form-data">
+            <div class="mb-2">
+                <label for="import_file" class="form-label">Import from JSON</label>
+                <input type="file" class="form-control form-control-sm" id="import_file"
+                       name="import_file" accept=".json,application/json">
+            </div>
+            <button type="submit" class="btn btn-sm btn-outline-warning"
+                    onclick="return confirm('Import sessions from the selected file?\nDuplicate sessions (same name + hostname + protocol) will be skipped.')">
+                <i class="bi bi-upload"></i> Import Sessions
+            </button>
+        </form>
+    </fieldset>
 </div>
 {% endblock %}

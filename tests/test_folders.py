@@ -1,9 +1,13 @@
-"""Tests for folder management (routes, model integration, drag-and-drop API)."""
+"""Tests for folder management (routes, model integration, drag-and-drop API).
+
+Includes tests for hierarchical subfolders using ``/``-separated paths.
+"""
 
 from __future__ import annotations
 
 from flask.testing import FlaskClient
 
+from src.app import _build_folder_tree
 from src.models.site import Site
 from src.services.settings_service import SettingsService
 from src.services.storage import SiteStorage
@@ -498,3 +502,289 @@ class TestSidebarFolders:
         assert len(sites) == 2
         copy = [s for s in sites if s.id != site_id][0]
         assert copy.folder == "Tools"
+
+
+# ── Subfolder support ─────────────────────────────────────────────────────────
+
+
+class TestFolderTreeBuilder:
+    """Test the _build_folder_tree helper in app.py."""
+
+    def test_flat_folders(self) -> None:
+        """Flat folder names produce a flat tree."""
+        tree = _build_folder_tree(["A", "B"], [])
+        assert len(tree) == 2
+        assert tree[0]["name"] == "A"
+        assert tree[0]["path"] == "A"
+        assert tree[0]["children"] == []
+        assert tree[1]["name"] == "B"
+
+    def test_nested_folders(self) -> None:
+        """Path-based names create nested children."""
+        tree = _build_folder_tree(["AWS", "AWS/Prod", "AWS/Staging"], [])
+        assert len(tree) == 1
+        aws = tree[0]
+        assert aws["name"] == "AWS"
+        assert len(aws["children"]) == 2
+        assert aws["children"][0]["name"] == "Prod"
+        assert aws["children"][0]["path"] == "AWS/Prod"
+        assert aws["children"][1]["name"] == "Staging"
+
+    def test_deeply_nested(self) -> None:
+        """Three levels of nesting work correctly."""
+        tree = _build_folder_tree(["A", "A/B", "A/B/C"], [])
+        assert len(tree) == 1
+        a = tree[0]
+        assert len(a["children"]) == 1
+        b = a["children"][0]
+        assert b["name"] == "B"
+        assert len(b["children"]) == 1
+        c = b["children"][0]
+        assert c["name"] == "C"
+        assert c["path"] == "A/B/C"
+
+    def test_sites_assigned_to_correct_node(self) -> None:
+        """Sites are placed in the matching folder node."""
+        site_a = Site(name="S1", hostname="h", folder="AWS/Prod")
+        site_b = Site(name="S2", hostname="h", folder="AWS")
+        tree = _build_folder_tree(
+            ["AWS", "AWS/Prod"], [site_a, site_b],
+        )
+        aws = tree[0]
+        assert len(aws["sites"]) == 1
+        assert aws["sites"][0].name == "S2"
+        prod = aws["children"][0]
+        assert len(prod["sites"]) == 1
+        assert prod["sites"][0].name == "S1"
+
+    def test_preserves_order(self) -> None:
+        """Tree preserves the insertion order of folders."""
+        tree = _build_folder_tree(["Z", "A", "M"], [])
+        names = [n["name"] for n in tree]
+        assert names == ["Z", "A", "M"]
+
+    def test_orphan_subfolder_goes_to_root(self) -> None:
+        """Subfolder without parent in list becomes a root node."""
+        tree = _build_folder_tree(["AWS/Prod"], [])
+        assert len(tree) == 1
+        assert tree[0]["name"] == "Prod"
+        assert tree[0]["path"] == "AWS/Prod"
+
+
+class TestSubfolderCreate:
+    """Test creating subfolders via the API."""
+
+    def test_create_subfolder_with_parent(
+        self, app, client: FlaskClient,
+    ) -> None:
+        """Creating with parent auto-builds the full path."""
+        _create_folder(app, "AWS")
+        resp = client.post(
+            "/folders/create",
+            json={"name": "Production", "parent": "AWS"},
+        )
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["ok"] is True
+        assert "AWS/Production" in data["folders"]
+
+    def test_create_subfolder_via_path(
+        self, app, client: FlaskClient,
+    ) -> None:
+        """Creating with a path name directly works."""
+        resp = client.post(
+            "/folders/create",
+            json={"name": "AWS/Staging"},
+        )
+        assert resp.status_code == 200
+        data = resp.get_json()
+        # Both "AWS" (auto-created parent) and "AWS/Staging" should exist
+        assert "AWS" in data["folders"]
+        assert "AWS/Staging" in data["folders"]
+
+    def test_auto_creates_intermediate_folders(
+        self, app, client: FlaskClient,
+    ) -> None:
+        """Deep path auto-creates all intermediate parents."""
+        resp = client.post(
+            "/folders/create",
+            json={"name": "A/B/C"},
+        )
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert "A" in data["folders"]
+        assert "A/B" in data["folders"]
+        assert "A/B/C" in data["folders"]
+
+    def test_create_duplicate_subfolder(
+        self, app, client: FlaskClient,
+    ) -> None:
+        """Creating an already-existing subfolder returns 409."""
+        _create_folder(app, "AWS")
+        _create_folder(app, "AWS/Prod")
+        resp = client.post(
+            "/folders/create",
+            json={"name": "Prod", "parent": "AWS"},
+        )
+        assert resp.status_code == 409
+
+
+class TestSubfolderRename:
+    """Test renaming folders with subfolders."""
+
+    def test_rename_parent_cascades_to_children(
+        self, app, client: FlaskClient,
+    ) -> None:
+        """Renaming a parent folder renames all descendant paths."""
+        _create_folder(app, "AWS")
+        _create_folder(app, "AWS/Prod")
+        _create_folder(app, "AWS/Staging")
+        site_id = _create_site(app, "Server", folder="AWS/Prod")
+
+        resp = client.post(
+            "/folders/rename",
+            json={"old_name": "AWS", "new_name": "Amazon"},
+        )
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert "Amazon" in data["folders"]
+        assert "Amazon/Prod" in data["folders"]
+        assert "Amazon/Staging" in data["folders"]
+        assert "AWS" not in data["folders"]
+
+        # Site folder should also be updated
+        storage: SiteStorage = app.config["STORAGE"]
+        site = storage.get_site(site_id)
+        assert site.folder == "Amazon/Prod"
+
+    def test_rename_leaf_subfolder(
+        self, app, client: FlaskClient,
+    ) -> None:
+        """Renaming a leaf subfolder only changes that path."""
+        _create_folder(app, "AWS")
+        _create_folder(app, "AWS/Prod")
+        _create_folder(app, "AWS/Stage")
+
+        resp = client.post(
+            "/folders/rename",
+            json={"old_name": "AWS/Prod", "new_name": "AWS/Production"},
+        )
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert "AWS/Production" in data["folders"]
+        assert "AWS/Prod" not in data["folders"]
+        # Sibling untouched
+        assert "AWS/Stage" in data["folders"]
+
+
+class TestSubfolderDelete:
+    """Test deleting folders that have subfolders."""
+
+    def test_delete_parent_removes_children(
+        self, app, client: FlaskClient,
+    ) -> None:
+        """Deleting a parent removes all subfolders too."""
+        _create_folder(app, "AWS")
+        _create_folder(app, "AWS/Prod")
+        _create_folder(app, "AWS/Staging")
+        site_id = _create_site(app, "Web", folder="AWS/Prod")
+
+        resp = client.post(
+            "/folders/delete",
+            json={"name": "AWS"},
+        )
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert "AWS" not in data["folders"]
+        assert "AWS/Prod" not in data["folders"]
+        assert "AWS/Staging" not in data["folders"]
+
+        # Site should be moved to root
+        storage: SiteStorage = app.config["STORAGE"]
+        site = storage.get_site(site_id)
+        assert site.folder == ""
+
+    def test_delete_leaf_preserves_parent(
+        self, app, client: FlaskClient,
+    ) -> None:
+        """Deleting a leaf subfolder keeps the parent."""
+        _create_folder(app, "AWS")
+        _create_folder(app, "AWS/Prod")
+
+        resp = client.post(
+            "/folders/delete",
+            json={"name": "AWS/Prod"},
+        )
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert "AWS" in data["folders"]
+        assert "AWS/Prod" not in data["folders"]
+
+
+class TestSubfolderMove:
+    """Test moving sites into subfolders."""
+
+    def test_move_site_to_subfolder(
+        self, app, client: FlaskClient,
+    ) -> None:
+        """A site can be moved into a subfolder."""
+        _create_folder(app, "AWS")
+        _create_folder(app, "AWS/Prod")
+        site_id = _create_site(app, "Web")
+
+        resp = client.post(
+            "/folders/move",
+            json={"site_id": site_id, "folder": "AWS/Prod"},
+        )
+        assert resp.status_code == 200
+        storage: SiteStorage = app.config["STORAGE"]
+        assert storage.get_site(site_id).folder == "AWS/Prod"
+
+
+class TestSubfolderSidebar:
+    """Test that the sidebar renders the folder tree correctly."""
+
+    def test_sidebar_shows_subfolder(
+        self, app, client: FlaskClient,
+    ) -> None:
+        """Subfolders appear in the sidebar HTML."""
+        _create_folder(app, "AWS")
+        _create_folder(app, "AWS/Production")
+        _create_site(app, "Web", folder="AWS/Production")
+
+        resp = client.get("/")
+        assert resp.status_code == 200
+        html = resp.data.decode()
+        assert "AWS" in html
+        assert "Production" in html
+
+    def test_form_shows_subfolder_in_dropdown(
+        self, app, client: FlaskClient,
+    ) -> None:
+        """The site form dropdown includes subfolders."""
+        _create_folder(app, "AWS")
+        _create_folder(app, "AWS/Prod")
+
+        resp = client.get("/sites/new")
+        html = resp.data.decode()
+        assert "AWS/Prod" in html
+
+    def test_create_site_in_subfolder(
+        self, app, client: FlaskClient,
+    ) -> None:
+        """A site can be created directly in a subfolder."""
+        _create_folder(app, "AWS")
+        _create_folder(app, "AWS/Prod")
+        client.post(
+            "/sites/new",
+            data={
+                "name": "Prod Server",
+                "hostname": "10.0.0.1",
+                "port": "22",
+                "folder": "AWS/Prod",
+            },
+            follow_redirects=True,
+        )
+        storage: SiteStorage = app.config["STORAGE"]
+        site = storage.list_sites()[0]
+        assert site.folder == "AWS/Prod"

@@ -1,4 +1,10 @@
-"""Folder management routes for organising sessions in the sidebar."""
+"""Folder management routes for organising sessions in the sidebar.
+
+Folders use path-based naming with ``/`` as separator to support
+arbitrary nesting.  For example, ``"AWS/Production"`` is a subfolder
+of ``"AWS"``.  The flat ``folders`` list in settings stores every path
+(parents and children); the context processor builds the tree.
+"""
 
 from __future__ import annotations
 
@@ -17,6 +23,8 @@ from src.services.storage import SiteStorage
 
 folders_bp = Blueprint("folders", __name__)
 
+FOLDER_SEP = "/"
+
 
 def _storage() -> SiteStorage:
     """Retrieve the shared :class:`SiteStorage` from the app config."""
@@ -28,23 +36,48 @@ def _settings() -> SettingsService:
     return current_app.config["SETTINGS"]
 
 
+def _sanitise_folder_name(name: str) -> str:
+    """Strip whitespace and collapse repeated separators."""
+    parts = [p.strip() for p in name.split(FOLDER_SEP) if p.strip()]
+    return FOLDER_SEP.join(parts)
+
+
 # ── Create folder ─────────────────────────────────────────────────────────────
 
 
 @folders_bp.route("/folders/create", methods=["POST"])
 def create():
-    """Create a new folder.
+    """Create a new folder (or subfolder).
 
-    Accepts either form data (``name``) for traditional POST, or JSON
-    (``{"name": "..."}``) for AJAX calls from the sidebar.
+    Accepts either form data or JSON.  The ``name`` field may be a simple
+    name (created at root) or a path like ``"AWS/Production"`` to create
+    a subfolder.  Alternatively, pass ``parent`` to automatically prefix
+    the new name — e.g. ``{"name": "Production", "parent": "AWS"}``
+    creates ``"AWS/Production"``.
+
+    Any missing intermediate folders are created automatically.
     """
     if request.is_json:
         data = request.get_json(silent=True) or {}
-        name = data.get("name", "").strip()
+        raw_name = data.get("name", "").strip()
+        parent = data.get("parent", "").strip()
     else:
-        name = request.form.get("name", "").strip()
+        raw_name = request.form.get("name", "").strip()
+        parent = request.form.get("parent", "").strip()
 
-    if not name:
+    if not raw_name:
+        if request.is_json:
+            return jsonify({"error": "Folder name is required."}), 400
+        flash("Folder name is required.", "danger")
+        return redirect(url_for("sites.index"))
+
+    # Build the full path
+    if parent:
+        full_path = _sanitise_folder_name(parent + FOLDER_SEP + raw_name)
+    else:
+        full_path = _sanitise_folder_name(raw_name)
+
+    if not full_path:
         if request.is_json:
             return jsonify({"error": "Folder name is required."}), 400
         flash("Folder name is required.", "danger")
@@ -54,19 +87,25 @@ def create():
     settings = svc.get_all()
     folders: list[str] = settings.get("folders", [])
 
-    if name in folders:
+    if full_path in folders:
         if request.is_json:
-            return jsonify({"error": f"Folder '{name}' already exists."}), 409
-        flash(f"Folder '{name}' already exists.", "warning")
+            return jsonify({"error": f"Folder '{full_path}' already exists."}), 409
+        flash(f"Folder '{full_path}' already exists.", "warning")
         return redirect(url_for("sites.index"))
 
-    folders.append(name)
+    # Auto-create intermediate parent folders that don't exist yet.
+    parts = full_path.split(FOLDER_SEP)
+    for i in range(1, len(parts) + 1):
+        ancestor = FOLDER_SEP.join(parts[:i])
+        if ancestor not in folders:
+            folders.append(ancestor)
+
     svc.update({"folders": folders})
 
     if request.is_json:
-        return jsonify({"ok": True, "folder": name, "folders": folders})
+        return jsonify({"ok": True, "folder": full_path, "folders": folders})
 
-    flash(f"Folder '{name}' created.", "success")
+    flash(f"Folder '{full_path}' created.", "success")
     return redirect(url_for("sites.index"))
 
 
@@ -77,7 +116,8 @@ def create():
 def rename():
     """Rename an existing folder.
 
-    Also updates the ``folder`` field on every site in the old folder.
+    Also updates the ``folder`` field on every site in the old folder
+    (and its subfolders), and renames all descendant folder paths.
     """
     if request.is_json:
         data = request.get_json(silent=True) or {}
@@ -112,19 +152,30 @@ def rename():
         flash(msg, "warning")
         return redirect(url_for("sites.index"))
 
-    # Rename in folder list
-    idx = folders.index(old_name)
-    folders[idx] = new_name
-    svc.update({"folders": folders})
+    # Rename this folder and all descendant paths.
+    old_prefix = old_name + FOLDER_SEP
+    updated_folders = []
+    for f in folders:
+        if f == old_name:
+            updated_folders.append(new_name)
+        elif f.startswith(old_prefix):
+            updated_folders.append(new_name + f[len(old_name):])
+        else:
+            updated_folders.append(f)
 
-    # Update all sites that were in the old folder
+    svc.update({"folders": updated_folders})
+
+    # Update all sites whose folder matches (exactly or as a descendant).
     storage = _storage()
     for site in storage.list_sites():
         if site.folder == old_name:
             storage.update_site(site.id, {"folder": new_name})
+        elif site.folder.startswith(old_prefix):
+            new_folder = new_name + site.folder[len(old_name):]
+            storage.update_site(site.id, {"folder": new_folder})
 
     if request.is_json:
-        return jsonify({"ok": True, "folders": folders})
+        return jsonify({"ok": True, "folders": updated_folders})
 
     flash(f"Folder renamed to '{new_name}'.", "success")
     return redirect(url_for("sites.index"))
@@ -135,9 +186,9 @@ def rename():
 
 @folders_bp.route("/folders/delete", methods=["POST"])
 def delete():
-    """Delete a folder.
+    """Delete a folder and all of its subfolders.
 
-    Sites in the folder are moved back to the root (unfoldered).
+    Sites in the folder (and subfolders) are moved back to the root.
     """
     if request.is_json:
         data = request.get_json(silent=True) or {}
@@ -163,13 +214,16 @@ def delete():
         flash(msg, "danger")
         return redirect(url_for("sites.index"))
 
-    folders.remove(name)
+    # Remove this folder and all descendants.
+    prefix = name + FOLDER_SEP
+    removed = {f for f in folders if f == name or f.startswith(prefix)}
+    folders = [f for f in folders if f not in removed]
     svc.update({"folders": folders})
 
-    # Move sites back to root
+    # Move sites in removed folders back to root.
     storage = _storage()
     for site in storage.list_sites():
-        if site.folder == name:
+        if site.folder in removed:
             storage.update_site(site.id, {"folder": ""})
 
     if request.is_json:
@@ -186,7 +240,7 @@ def delete():
 def move_site():
     """Move a site into (or out of) a folder.
 
-    Expects JSON: ``{"site_id": "...", "folder": "FolderName"}``
+    Expects JSON: ``{"site_id": "...", "folder": "AWS/Production"}``
     Pass ``folder: ""`` to move a site back to the root.
     """
     data = request.get_json(silent=True) or {}
