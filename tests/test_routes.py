@@ -248,6 +248,40 @@ class TestSFTPRoute:
         # Should render (200) with an error message, not crash
         assert resp.status_code == 200
 
+    def test_sftp_root_used_as_start_directory(
+        self, app, client: FlaskClient,
+    ) -> None:
+        """SFTP uses the configured sftp_root when no path is given."""
+        site_id = _create_protocol_site(
+            app, "ssh2", sftp_root="/var/www", id="sftp-root-test",
+        )
+        resp = client.get(f"/sites/{site_id}/sftp")
+        assert resp.status_code == 200
+        # The current_path rendered in the template should be /var/www
+        assert b"/var/www" in resp.data
+
+    def test_sftp_empty_root_defaults_to_home(
+        self, app, client: FlaskClient,
+    ) -> None:
+        """SFTP with empty sftp_root defaults to '.' (home directory)."""
+        site_id = _create_protocol_site(
+            app, "ssh2", sftp_root="", id="sftp-default-test",
+        )
+        resp = client.get(f"/sites/{site_id}/sftp")
+        assert resp.status_code == 200
+
+    def test_sftp_explicit_path_overrides_root(
+        self, app, client: FlaskClient,
+    ) -> None:
+        """An explicit path in the URL overrides the configured sftp_root."""
+        site_id = _create_protocol_site(
+            app, "ssh2", sftp_root="/var/www", id="sftp-override-test",
+        )
+        resp = client.get(f"/sites/{site_id}/sftp/tmp")
+        assert resp.status_code == 200
+        # Should show /tmp, not /var/www
+        assert b"tmp" in resp.data
+
 
 # ── Protocol-aware routes ─────────────────────────────────────────────────────
 
@@ -447,6 +481,100 @@ class TestProtocolRoutes:
         resp = client.get("/")
         assert resp.status_code == 200
         assert b"bi-terminal-fill" in resp.data
+
+
+# ── SFTP Start Directory ─────────────────────────────────────────────────────
+
+
+class TestSftpRootCrud:
+    """Test SFTP start directory field across create/edit/duplicate."""
+
+    def test_create_with_sftp_root(self, app, client: FlaskClient) -> None:
+        """POST /sites/new stores the sftp_root field."""
+        resp = client.post(
+            "/sites/new",
+            data={
+                "name": "Web Server",
+                "hostname": "web.example.com",
+                "port": "22",
+                "protocol": "ssh2",
+                "sftp_root": "/var/www/html",
+            },
+            follow_redirects=True,
+        )
+        assert resp.status_code == 200
+        storage: SiteStorage = app.config["STORAGE"]
+        site = storage.list_sites()[0]
+        assert site.sftp_root == "/var/www/html"
+
+    def test_create_without_sftp_root_defaults_empty(
+        self, app, client: FlaskClient,
+    ) -> None:
+        """POST /sites/new without sftp_root defaults to empty string."""
+        resp = client.post(
+            "/sites/new",
+            data={
+                "name": "Plain SSH",
+                "hostname": "host.com",
+                "port": "22",
+                "protocol": "ssh2",
+            },
+            follow_redirects=True,
+        )
+        assert resp.status_code == 200
+        storage: SiteStorage = app.config["STORAGE"]
+        site = storage.list_sites()[0]
+        assert site.sftp_root == ""
+
+    def test_edit_updates_sftp_root(self, app, client: FlaskClient) -> None:
+        """POST edit can set/change sftp_root."""
+        site_id = _create_protocol_site(
+            app, "ssh2", sftp_root="/old/path", id="edit-sftp-test",
+        )
+        resp = client.post(
+            f"/sites/{site_id}/edit",
+            data={
+                "name": "ssh2 test",
+                "hostname": "10.0.0.1",
+                "port": "22",
+                "protocol": "ssh2",
+                "sftp_root": "/new/path",
+            },
+            follow_redirects=True,
+        )
+        assert resp.status_code == 200
+        storage: SiteStorage = app.config["STORAGE"]
+        site = storage.get_site(site_id)
+        assert site.sftp_root == "/new/path"
+
+    def test_duplicate_preserves_sftp_root(
+        self, app, client: FlaskClient,
+    ) -> None:
+        """Duplicating a site preserves its sftp_root."""
+        site_id = _create_protocol_site(
+            app, "ssh2", sftp_root="/data/uploads", id="dup-sftp-test",
+        )
+        resp = client.post(
+            f"/sites/{site_id}/duplicate",
+            follow_redirects=True,
+        )
+        assert resp.status_code == 200
+        storage: SiteStorage = app.config["STORAGE"]
+        sites = storage.list_sites()
+        copy = [s for s in sites if s.name.endswith("(Copy)")][0]
+        assert copy.sftp_root == "/data/uploads"
+
+    def test_edit_form_shows_sftp_root(
+        self, app, client: FlaskClient,
+    ) -> None:
+        """Edit form renders the current sftp_root value."""
+        site_id = _create_protocol_site(
+            app, "ssh2", sftp_root="/srv/files", id="form-sftp-test",
+        )
+        resp = client.get(f"/sites/{site_id}/edit")
+        assert resp.status_code == 200
+        assert b"/srv/files" in resp.data
+        assert b"SFTP Start Directory" in resp.data
 
 
 # ── Export ────────────────────────────────────────────────────────────────────

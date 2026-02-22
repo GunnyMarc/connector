@@ -61,6 +61,7 @@ def create():
             protocol=request.form.get("protocol", "ssh2"),
             serial_port=request.form.get("serial_port", ""),
             serial_baud=int(request.form.get("serial_baud", 9600)),
+            sftp_root=request.form.get("sftp_root", ""),
         )
         _storage().create_site(site)
         flash(f"Site '{site.name}' created.", "success")
@@ -94,6 +95,7 @@ def edit(site_id: str):
             "protocol": request.form.get("protocol", "ssh2"),
             "serial_port": request.form.get("serial_port", ""),
             "serial_baud": int(request.form.get("serial_baud", 9600)),
+            "sftp_root": request.form.get("sftp_root", ""),
         }
         _storage().update_site(site_id, updates)
         flash(f"Site '{updates['name']}' updated.", "success")
@@ -127,6 +129,7 @@ def duplicate(site_id: str):
         protocol=original.protocol,
         serial_port=original.serial_port,
         serial_baud=original.serial_baud,
+        sftp_root=original.sftp_root,
     )
     storage.create_site(copy)
     flash(f"Site '{copy.name}' created.", "success")

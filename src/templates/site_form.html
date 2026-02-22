@@ -113,6 +113,18 @@
             </div>
         </div>
 
+        {# ── SFTP start directory — ssh1/ssh2 only ────────────────── #}
+        <div class="mb-3" id="sftp_root_group">
+            <label for="sftp_root" class="form-label">SFTP Start Directory</label>
+            <input type="text" class="form-control form-control-sm" id="sftp_root"
+                   name="sftp_root"
+                   value="{{ site.sftp_root if site else '' }}"
+                   placeholder="e.g. /var/www or /home/user (blank = home directory)">
+            <div class="form-text">
+                Absolute path where the SFTP file browser starts. Leave blank to use the remote home directory.
+            </div>
+        </div>
+
         <div class="mb-3">
             <label for="notes" class="form-label">Notes</label>
             <textarea class="form-control form-control-sm" id="notes" name="notes"
@@ -146,7 +158,7 @@ function toggleProtocol() {
     var proto = document.getElementById("protocol").value;
 
     /* Which groups are visible for each protocol:
-       ssh1/ssh2  : network + username + auth
+       ssh1/ssh2  : network + username + auth + sftp_root
        local      : (nothing)
        raw        : network
        telnet     : network + username
@@ -156,11 +168,13 @@ function toggleProtocol() {
     var showSerial   = proto === "serial";
     var showUsername  = ["ssh2", "ssh1", "telnet"].indexOf(proto) !== -1;
     var showAuth     = ["ssh2", "ssh1"].indexOf(proto) !== -1;
+    var showSftpRoot = ["ssh2", "ssh1"].indexOf(proto) !== -1;
 
     document.getElementById("network_group").classList.toggle("d-none", !showNetwork);
     document.getElementById("serial_group").classList.toggle("d-none", !showSerial);
     document.getElementById("username_group").classList.toggle("d-none", !showUsername);
     document.getElementById("auth_group").classList.toggle("d-none", !showAuth);
+    document.getElementById("sftp_root_group").classList.toggle("d-none", !showSftpRoot);
 
     /* Make hostname required only when visible */
     document.getElementById("hostname").required = showNetwork;

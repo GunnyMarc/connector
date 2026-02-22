@@ -39,6 +39,8 @@ class Site:
                      for backward compatibility.
         serial_port: Device path for serial connections (e.g. ``/dev/ttyUSB0``).
         serial_baud: Baud rate for serial connections (default 9600).
+        sftp_root:   Absolute path where the SFTP file browser starts
+                     (empty = remote home directory).
         id:          Auto-generated UUID.
     """
 
@@ -54,6 +56,7 @@ class Site:
     protocol: str = "ssh2"
     serial_port: str = ""
     serial_baud: int = 9600
+    sftp_root: str = ""
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
 
     @property

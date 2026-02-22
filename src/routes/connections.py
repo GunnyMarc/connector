@@ -110,12 +110,25 @@ def ssh(site_id: str):
 
 @connections_bp.route("/sites/<site_id>/sftp")
 @connections_bp.route("/sites/<site_id>/sftp/<path:remote_path>")
-def sftp(site_id: str, remote_path: str = "."):
-    """List the contents of *remote_path* via SFTP."""
+def sftp(site_id: str, remote_path: str | None = None):
+    """List the contents of *remote_path* via SFTP.
+
+    When *remote_path* is not provided, the session's configured
+    ``sftp_root`` is used as the starting directory.  If ``sftp_root``
+    is empty, the remote home directory (``"."``) is used instead.
+    """
     site = _storage().get_site(site_id)
     if not site:
         flash("Site not found.", "danger")
         return redirect(url_for("sites.index"))
+
+    # Use the configured SFTP start directory when no path is explicit.
+    if remote_path is None:
+        sftp_root = getattr(site, "sftp_root", "")
+        remote_path = sftp_root if sftp_root else "."
+
+    # At this point remote_path is always a non-empty string.
+    assert isinstance(remote_path, str)
 
     files = []
     error = None

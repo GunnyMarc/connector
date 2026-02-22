@@ -190,3 +190,35 @@ class TestProtocolFields:
         assert site.protocol == "ssh2"
         assert site.serial_port == ""
         assert site.serial_baud == 9600
+
+
+class TestSftpRoot:
+    """Test SFTP start directory field."""
+
+    def test_default_sftp_root_is_empty(self) -> None:
+        """New sites default to an empty sftp_root."""
+        site = Site(name="S", hostname="h.com")
+        assert site.sftp_root == ""
+
+    def test_sftp_root_creation(self) -> None:
+        """Site can be created with a custom sftp_root."""
+        site = Site(name="S", hostname="h.com", sftp_root="/var/www")
+        assert site.sftp_root == "/var/www"
+
+    def test_sftp_root_round_trip(self) -> None:
+        """sftp_root survives to_dict -> from_dict."""
+        site = Site(name="S", hostname="h.com", sftp_root="/data/files")
+        restored = Site.from_dict(site.to_dict())
+        assert restored.sftp_root == "/data/files"
+
+    def test_old_data_gets_default_sftp_root(self) -> None:
+        """Data without sftp_root field defaults to empty (backward compat)."""
+        data = {"name": "Old", "hostname": "old.com", "port": 22}
+        site = Site.from_dict(data)
+        assert site.sftp_root == ""
+
+    def test_sftp_root_in_to_dict(self) -> None:
+        """sftp_root is included in the serialised dictionary."""
+        site = Site(name="S", hostname="h.com", sftp_root="/home/deploy")
+        d = site.to_dict()
+        assert d["sftp_root"] == "/home/deploy"
