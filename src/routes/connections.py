@@ -109,41 +109,46 @@ def ssh(site_id: str):
 
 
 @connections_bp.route("/sites/<site_id>/sftp")
-@connections_bp.route("/sites/<site_id>/sftp/<path:remote_path>")
-def sftp(site_id: str, remote_path: str | None = None):
-    """List the contents of *remote_path* via SFTP.
+def sftp(site_id: str):
+    """List the contents of a remote directory via SFTP.
 
-    When *remote_path* is not provided, the session's configured
-    ``sftp_root`` is used as the starting directory.  If ``sftp_root``
-    is empty, the remote home directory (``"."``) is used instead.
+    The directory is taken from the ``?path=`` query parameter.  When
+    omitted the session's ``sftp_root`` is used, falling back to the
+    remote home directory.
+
+    All paths are normalised to absolute form via ``sftp.normalize()``
+    so that directory links in the template are always unambiguous.
     """
     site = _storage().get_site(site_id)
     if not site:
         flash("Site not found.", "danger")
         return redirect(url_for("sites.index"))
 
-    # Use the configured SFTP start directory when no path is explicit.
-    if remote_path is None:
+    # Determine the starting path.
+    remote_path = request.args.get("path", "").strip()
+    if not remote_path:
         sftp_root = getattr(site, "sftp_root", "")
         remote_path = sftp_root if sftp_root else "."
-
-    # At this point remote_path is always a non-empty string.
-    assert isinstance(remote_path, str)
 
     files = []
     error = None
 
     try:
         with SSHService(site) as conn:
+            # Normalise to an absolute path so the template can build
+            # correct links for child directories and the parent.
+            remote_path = conn.sftp_normalize(remote_path)
             files = conn.sftp_list(remote_path)
     except Exception as exc:
         error = str(exc)
 
-    # Compute parent directory (None when already at root)
+    # Compute parent directory (None when at filesystem root).
     if remote_path in (".", "", "/"):
         parent = None
     else:
-        parent = os.path.dirname(remote_path) or "."
+        parent = os.path.dirname(remote_path)
+        if not parent:
+            parent = "/"
 
     return render_template(
         "sftp.html",
@@ -202,7 +207,7 @@ def sftp_upload(site_id: str):
     if not uploaded or not uploaded.filename:
         flash("No file selected.", "danger")
         return redirect(
-            url_for("connections.sftp", site_id=site_id, remote_path=remote_dir),
+            url_for("connections.sftp", site_id=site_id, path=remote_dir),
         )
 
     try:
@@ -221,5 +226,5 @@ def sftp_upload(site_id: str):
         flash(f"Upload failed: {exc}", "danger")
 
     return redirect(
-        url_for("connections.sftp", site_id=site_id, remote_path=remote_dir),
+        url_for("connections.sftp", site_id=site_id, path=remote_dir),
     )

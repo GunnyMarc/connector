@@ -45,7 +45,7 @@
                 {% if parent is not none %}
                 <tr>
                     <td colspan="3">
-                        <a href="{{ url_for('connections.sftp', site_id=site.id, remote_path=parent) }}"
+                        <a href="{{ url_for('connections.sftp', site_id=site.id, path=parent) }}"
                            class="text-decoration-none">
                             <i class="bi bi-arrow-up"></i> ..
                         </a>
@@ -56,7 +56,7 @@
                 <tr>
                     <td>
                         {% if f.is_dir %}
-                        <a href="{{ url_for('connections.sftp', site_id=site.id, remote_path=f.path) }}"
+                        <a href="{{ url_for('connections.sftp', site_id=site.id, path=f.path) }}"
                            class="text-decoration-none">
                             <i class="bi bi-folder-fill text-warning"></i> {{ f.name }}/
                         </a>

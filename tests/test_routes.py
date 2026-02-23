@@ -273,14 +273,14 @@ class TestSFTPRoute:
     def test_sftp_explicit_path_overrides_root(
         self, app, client: FlaskClient,
     ) -> None:
-        """An explicit path in the URL overrides the configured sftp_root."""
+        """An explicit ?path= overrides the configured sftp_root."""
         site_id = _create_protocol_site(
             app, "ssh2", sftp_root="/var/www", id="sftp-override-test",
         )
-        resp = client.get(f"/sites/{site_id}/sftp/tmp")
+        resp = client.get(f"/sites/{site_id}/sftp?path=/tmp")
         assert resp.status_code == 200
         # Should show /tmp, not /var/www
-        assert b"tmp" in resp.data
+        assert b"/tmp" in resp.data
 
 
 # ── Protocol-aware routes ─────────────────────────────────────────────────────
