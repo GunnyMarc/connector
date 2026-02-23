@@ -151,4 +151,26 @@ def create_app() -> Flask:
 
 if __name__ == "__main__":
     application = create_app()
-    application.run(host=Config.HOST, port=Config.PORT, debug=True)
+
+    # Build SSL context when HTTPS is enabled.
+    ssl_ctx = None
+    if Config.SSL_ENABLED:
+        from src.services.ssl_service import ensure_ssl_certs
+
+        cert, key = ensure_ssl_certs(
+            Config.SSL_CERT_FILE,
+            Config.SSL_KEY_FILE,
+            hostname=Config.HOST,
+        )
+        ssl_ctx = (str(cert), str(key))
+        scheme = "https"
+    else:
+        scheme = "http"
+
+    print(f"  Connector running on {scheme}://{Config.HOST}:{Config.PORT}")
+    application.run(
+        host=Config.HOST,
+        port=Config.PORT,
+        debug=True,
+        ssl_context=ssl_ctx,
+    )

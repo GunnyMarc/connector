@@ -23,6 +23,17 @@ class Config:
     HOST: str = os.getenv("CONNECTOR_HOST", "127.0.0.1")
     PORT: int = int(os.getenv("CONNECTOR_PORT", "5101"))
 
+    # SSL / TLS
+    SSL_ENABLED: bool = os.getenv("CONNECTOR_SSL_ENABLED", "true").lower() in (
+        "1", "true", "yes",
+    )
+    SSL_CERT_FILE: Path = Path(
+        os.getenv("CONNECTOR_SSL_CERT", str(DATA_DIR / "cert.pem")),
+    )
+    SSL_KEY_FILE: Path = Path(
+        os.getenv("CONNECTOR_SSL_KEY", str(DATA_DIR / "key.pem")),
+    )
+
     # SSH defaults
     SSH_TIMEOUT: int = int(os.getenv("SSH_TIMEOUT", "10"))
     SSH_COMMAND_TIMEOUT: int = int(os.getenv("SSH_COMMAND_TIMEOUT", "30"))

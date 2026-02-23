@@ -17,6 +17,7 @@ connector_venv/
 data/.key
 data/*.enc
 data/*.pid
+data/*.pem
 AGENTS.md
 tests/
 

@@ -47,6 +47,14 @@ load_env() {
 get_host_port() {
     HOST="${CONNECTOR_HOST:-127.0.0.1}"
     PORT="${CONNECTOR_PORT:-5101}"
+
+    # Determine scheme based on SSL setting (default: enabled).
+    local ssl_flag="${CONNECTOR_SSL_ENABLED:-true}"
+    ssl_flag="$(echo "$ssl_flag" | tr '[:upper:]' '[:lower:]')"
+    case "$ssl_flag" in
+        1|true|yes) SCHEME="https" ;;
+        *)          SCHEME="http" ;;
+    esac
 }
 
 is_running() {
@@ -75,7 +83,7 @@ do_start() {
     get_host_port
 
     echo "──────────────────────────────────────────"
-    echo "  Connector starting on http://$HOST:$PORT"
+    echo "  Connector starting on $SCHEME://$HOST:$PORT"
     echo "──────────────────────────────────────────"
 
     nohup python -m src.app > /dev/null 2>&1 &
@@ -138,7 +146,7 @@ do_debug() {
     local log_file="$LOG_DIR/connector_$(date +%Y%m%d_%H%M%S).log"
 
     echo "──────────────────────────────────────────"
-    echo "  Connector DEBUG on http://$HOST:$PORT"
+    echo "  Connector DEBUG on $SCHEME://$HOST:$PORT"
     echo "  Logging to: $log_file"
     echo "  Press Ctrl+C to stop"
     echo "──────────────────────────────────────────"
