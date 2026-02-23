@@ -1,0 +1,10 @@
+# Xcode generated project (regenerate with: xcodegen generate)
+Connector.xcodeproj/
+
+# Xcode build artifacts
+build/
+DerivedData/
+*.xcworkspace/xcuserdata/
+
+# macOS junk
+.DS_Store

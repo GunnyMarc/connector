@@ -1,0 +1,63 @@
+name: Build macOS App
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "macos/**"
+      - ".github/workflows/build-macos.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "macos/**"
+      - ".github/workflows/build-macos.yml"
+  workflow_dispatch: # Allow manual trigger from GitHub UI
+
+jobs:
+  build:
+    name: Build Connector.app
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install xcodegen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        working-directory: macos
+        run: xcodegen generate
+
+      - name: Build release
+        working-directory: macos
+        run: |
+          xcodebuild -project Connector.xcodeproj \
+            -scheme Connector \
+            -configuration Release \
+            -derivedDataPath ./build \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Package app bundle
+        working-directory: macos
+        run: |
+          APP_PATH="build/Build/Products/Release/Connector.app"
+          if [ ! -d "$APP_PATH" ]; then
+            echo "ERROR: Connector.app not found at $APP_PATH"
+            find build -name "Connector.app" -type d 2>/dev/null
+            exit 1
+          fi
+
+          # Create a zip for the artifact upload
+          cd build/Build/Products/Release
+          zip -r -y ../../../../Connector.app.zip Connector.app
+
+      - name: Upload Connector.app
+        uses: actions/upload-artifact@v4
+        with:
+          name: Connector-macOS
+          path: macos/Connector.app.zip
+          retention-days: 30
+          if-no-files-found: error
