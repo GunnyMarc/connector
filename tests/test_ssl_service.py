@@ -9,7 +9,7 @@ from pathlib import Path
 from cryptography import x509
 from cryptography.hazmat.primitives.serialization import load_pem_private_key
 
-from src.services.ssl_service import ensure_ssl_certs
+from py_flask.services.ssl_service import ensure_ssl_certs
 
 
 class TestEnsureSSLCerts:

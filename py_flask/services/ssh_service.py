@@ -9,8 +9,8 @@ from typing import Optional
 
 import paramiko
 
-from src.config import Config
-from src.models.site import Site
+from py_flask.config import Config
+from py_flask.models.site import Site
 
 
 @dataclass

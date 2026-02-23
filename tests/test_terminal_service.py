@@ -5,7 +5,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from src.services.terminal_service import (
+from py_flask.services.terminal_service import (
     PlatformInfo,
     TerminalService,
     detect_platform,
@@ -24,9 +24,9 @@ class TestPlatformDetection:
         assert isinstance(info.has_sshpass, bool)
         assert info.terminal  # non-empty terminal name
 
-    @patch("src.services.terminal_service.platform.system", return_value="Darwin")
-    @patch("src.services.terminal_service.os.path.exists", return_value=True)
-    @patch("src.services.terminal_service.shutil.which", return_value=None)
+    @patch("py_flask.services.terminal_service.platform.system", return_value="Darwin")
+    @patch("py_flask.services.terminal_service.os.path.exists", return_value=True)
+    @patch("py_flask.services.terminal_service.shutil.which", return_value=None)
     def test_macos_detection(
         self, mock_which, mock_exists, mock_system,
     ) -> None:
@@ -35,9 +35,9 @@ class TestPlatformDetection:
         assert info.system == "Darwin"
         assert info.system_label == "macOS"
 
-    @patch("src.services.terminal_service.platform.system", return_value="Linux")
-    @patch("src.services.terminal_service.os.path.exists", return_value=False)
-    @patch("src.services.terminal_service.shutil.which", return_value=None)
+    @patch("py_flask.services.terminal_service.platform.system", return_value="Linux")
+    @patch("py_flask.services.terminal_service.os.path.exists", return_value=False)
+    @patch("py_flask.services.terminal_service.shutil.which", return_value=None)
     def test_linux_detection_fallback(
         self, mock_which, mock_exists, mock_system,
     ) -> None:
@@ -46,9 +46,9 @@ class TestPlatformDetection:
         assert info.system == "Linux"
         assert info.terminal == "xterm"
 
-    @patch("src.services.terminal_service.platform.system", return_value="Windows")
-    @patch("src.services.terminal_service.os.path.exists", return_value=False)
-    @patch("src.services.terminal_service.shutil.which", return_value=None)
+    @patch("py_flask.services.terminal_service.platform.system", return_value="Windows")
+    @patch("py_flask.services.terminal_service.os.path.exists", return_value=False)
+    @patch("py_flask.services.terminal_service.shutil.which", return_value=None)
     def test_windows_detection_fallback(
         self, mock_which, mock_exists, mock_system,
     ) -> None:

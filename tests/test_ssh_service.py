@@ -11,8 +11,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.models.site import Site
-from src.services.ssh_service import CommandResult, RemoteFile, SSHService
+from py_flask.models.site import Site
+from py_flask.services.ssh_service import CommandResult, RemoteFile, SSHService
 
 
 # ── CommandResult dataclass ───────────────────────────────────────────────
@@ -144,7 +144,7 @@ class TestSSHServiceNotConnected:
 class TestSSHServiceContextManager:
     """Test SSHService context-manager protocol."""
 
-    @patch("src.services.ssh_service.paramiko.SSHClient")
+    @patch("py_flask.services.ssh_service.paramiko.SSHClient")
     def test_enter_calls_connect(self, mock_client_cls: MagicMock) -> None:
         """__enter__ should call connect() and return the service."""
         site = Site(name="Test", hostname="example.com", username="user")
@@ -155,7 +155,7 @@ class TestSSHServiceContextManager:
         assert result is svc
         mock_client_cls.return_value.connect.assert_called_once()
 
-    @patch("src.services.ssh_service.paramiko.SSHClient")
+    @patch("py_flask.services.ssh_service.paramiko.SSHClient")
     def test_exit_calls_disconnect(self, mock_client_cls: MagicMock) -> None:
         """__exit__ should close the SSH client."""
         site = Site(name="Test", hostname="example.com", username="user")
@@ -166,7 +166,7 @@ class TestSSHServiceContextManager:
 
         mock_client_cls.return_value.close.assert_called_once()
 
-    @patch("src.services.ssh_service.paramiko.SSHClient")
+    @patch("py_flask.services.ssh_service.paramiko.SSHClient")
     def test_with_statement(self, mock_client_cls: MagicMock) -> None:
         """SSHService should work as a context manager with 'with' statement."""
         site = Site(name="Test", hostname="example.com", username="user")
@@ -184,7 +184,7 @@ class TestSSHServiceContextManager:
 class TestSSHServiceConnect:
     """Test connect() builds correct paramiko kwargs based on auth type."""
 
-    @patch("src.services.ssh_service.paramiko.SSHClient")
+    @patch("py_flask.services.ssh_service.paramiko.SSHClient")
     def test_password_auth(self, mock_client_cls: MagicMock) -> None:
         """Password auth should pass 'password' kwarg to paramiko."""
         site = Site(
@@ -202,7 +202,7 @@ class TestSSHServiceConnect:
         assert call_kwargs.kwargs.get("password") == "secret"
         assert "key_filename" not in call_kwargs.kwargs
 
-    @patch("src.services.ssh_service.paramiko.SSHClient")
+    @patch("py_flask.services.ssh_service.paramiko.SSHClient")
     def test_key_auth(self, mock_client_cls: MagicMock) -> None:
         """Key auth should pass 'key_filename' kwarg to paramiko."""
         site = Site(
@@ -220,7 +220,7 @@ class TestSSHServiceConnect:
         assert "key_filename" in call_kwargs.kwargs
         assert "password" not in call_kwargs.kwargs
 
-    @patch("src.services.ssh_service.paramiko.SSHClient")
+    @patch("py_flask.services.ssh_service.paramiko.SSHClient")
     def test_connect_passes_hostname_and_port(self, mock_client_cls: MagicMock) -> None:
         """connect() should pass hostname and port to paramiko."""
         site = Site(name="Test", hostname="myhost.com", port=2222, username="user")
@@ -231,7 +231,7 @@ class TestSSHServiceConnect:
         assert call_kwargs.kwargs["hostname"] == "myhost.com"
         assert call_kwargs.kwargs["port"] == 2222
 
-    @patch("src.services.ssh_service.paramiko.SSHClient")
+    @patch("py_flask.services.ssh_service.paramiko.SSHClient")
     def test_connect_passes_username(self, mock_client_cls: MagicMock) -> None:
         """connect() should pass username to paramiko."""
         site = Site(name="Test", hostname="host", username="testuser")
@@ -241,7 +241,7 @@ class TestSSHServiceConnect:
         call_kwargs = mock_client_cls.return_value.connect.call_args
         assert call_kwargs.kwargs["username"] == "testuser"
 
-    @patch("src.services.ssh_service.paramiko.SSHClient")
+    @patch("py_flask.services.ssh_service.paramiko.SSHClient")
     def test_connect_sets_auto_add_policy(self, mock_client_cls: MagicMock) -> None:
         """connect() should set AutoAddPolicy for host key verification."""
         site = Site(name="Test", hostname="host", username="user")
@@ -250,7 +250,7 @@ class TestSSHServiceConnect:
 
         mock_client_cls.return_value.set_missing_host_key_policy.assert_called_once()
 
-    @patch("src.services.ssh_service.paramiko.SSHClient")
+    @patch("py_flask.services.ssh_service.paramiko.SSHClient")
     def test_connect_includes_timeout(self, mock_client_cls: MagicMock) -> None:
         """connect() should include timeout from Config."""
         site = Site(name="Test", hostname="host", username="user")
@@ -275,7 +275,7 @@ class TestSSHServiceDisconnect:
         # Should not raise
         svc.disconnect()
 
-    @patch("src.services.ssh_service.paramiko.SSHClient")
+    @patch("py_flask.services.ssh_service.paramiko.SSHClient")
     def test_disconnect_clears_client(self, mock_client_cls: MagicMock) -> None:
         """disconnect() should set _client to None after closing."""
         site = Site(name="Test", hostname="host", username="user")
@@ -287,7 +287,7 @@ class TestSSHServiceDisconnect:
         with pytest.raises(ConnectionError):
             svc.execute("test")
 
-    @patch("src.services.ssh_service.paramiko.SSHClient")
+    @patch("py_flask.services.ssh_service.paramiko.SSHClient")
     def test_double_disconnect(self, mock_client_cls: MagicMock) -> None:
         """Calling disconnect() twice should be safe."""
         site = Site(name="Test", hostname="host", username="user")
@@ -303,7 +303,7 @@ class TestSSHServiceDisconnect:
 class TestSSHServiceExecute:
     """Test execute() with mocked paramiko client."""
 
-    @patch("src.services.ssh_service.paramiko.SSHClient")
+    @patch("py_flask.services.ssh_service.paramiko.SSHClient")
     def test_returns_command_result(self, mock_client_cls: MagicMock) -> None:
         """execute() should return a CommandResult with stdout, stderr, exit_code."""
         mock_client = mock_client_cls.return_value
@@ -324,7 +324,7 @@ class TestSSHServiceExecute:
         assert result.stderr == ""
         assert result.exit_code == 0
 
-    @patch("src.services.ssh_service.paramiko.SSHClient")
+    @patch("py_flask.services.ssh_service.paramiko.SSHClient")
     def test_captures_stderr(self, mock_client_cls: MagicMock) -> None:
         """execute() should capture stderr output."""
         mock_client = mock_client_cls.return_value

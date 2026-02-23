@@ -6,16 +6,16 @@ from pathlib import Path
 
 import pytest
 
-from src.config import Config
+from py_flask.config import Config
 
 
 class TestConfigDefaults:
     """Test Config class default values."""
 
     def test_base_dir_is_project_root(self) -> None:
-        """BASE_DIR should point to the project root (parent of src/)."""
+        """BASE_DIR should point to the project root (parent of py_flask/)."""
         assert Config.BASE_DIR.is_dir()
-        assert (Config.BASE_DIR / "src").is_dir()
+        assert (Config.BASE_DIR / "py_flask").is_dir()
 
     def test_data_dir_default_under_base(self) -> None:
         """DATA_DIR defaults to BASE_DIR/data when env var is unset."""
@@ -115,36 +115,36 @@ class TestConfigEnvOverrides:
 
         # Re-import to pick up the env var — but Config is a class with
         # class-level attrs evaluated at import time, so we monkeypatch directly.
-        monkeypatch.setattr("src.config.Config.DATA_DIR", Path(str(custom_dir)))
-        from src.config import Config as C
+        monkeypatch.setattr("py_flask.config.Config.DATA_DIR", Path(str(custom_dir)))
+        from py_flask.config import Config as C
 
         assert C.DATA_DIR == custom_dir
 
     def test_port_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """CONNECTOR_PORT env var should override PORT."""
-        monkeypatch.setattr("src.config.Config.PORT", 9999)
-        from src.config import Config as C
+        monkeypatch.setattr("py_flask.config.Config.PORT", 9999)
+        from py_flask.config import Config as C
 
         assert C.PORT == 9999
 
     def test_ssh_timeout_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """SSH_TIMEOUT env var should override SSH_TIMEOUT."""
-        monkeypatch.setattr("src.config.Config.SSH_TIMEOUT", 60)
-        from src.config import Config as C
+        monkeypatch.setattr("py_flask.config.Config.SSH_TIMEOUT", 60)
+        from py_flask.config import Config as C
 
         assert C.SSH_TIMEOUT == 60
 
     def test_ssh_command_timeout_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """SSH_COMMAND_TIMEOUT env var should override SSH_COMMAND_TIMEOUT."""
-        monkeypatch.setattr("src.config.Config.SSH_COMMAND_TIMEOUT", 120)
-        from src.config import Config as C
+        monkeypatch.setattr("py_flask.config.Config.SSH_COMMAND_TIMEOUT", 120)
+        from py_flask.config import Config as C
 
         assert C.SSH_COMMAND_TIMEOUT == 120
 
     def test_ssl_enabled_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """CONNECTOR_SSL_ENABLED env var should override SSL_ENABLED."""
-        monkeypatch.setattr("src.config.Config.SSL_ENABLED", False)
-        from src.config import Config as C
+        monkeypatch.setattr("py_flask.config.Config.SSL_ENABLED", False)
+        from py_flask.config import Config as C
 
         assert C.SSL_ENABLED is False
 
@@ -153,8 +153,8 @@ class TestConfigEnvOverrides:
     ) -> None:
         """CONNECTOR_SSL_CERT env var should override SSL_CERT_FILE."""
         custom = tmp_path / "custom_cert.pem"
-        monkeypatch.setattr("src.config.Config.SSL_CERT_FILE", custom)
-        from src.config import Config as C
+        monkeypatch.setattr("py_flask.config.Config.SSL_CERT_FILE", custom)
+        from py_flask.config import Config as C
 
         assert C.SSL_CERT_FILE == custom
 
@@ -163,7 +163,7 @@ class TestConfigEnvOverrides:
     ) -> None:
         """CONNECTOR_SSL_KEY env var should override SSL_KEY_FILE."""
         custom = tmp_path / "custom_key.pem"
-        monkeypatch.setattr("src.config.Config.SSL_KEY_FILE", custom)
-        from src.config import Config as C
+        monkeypatch.setattr("py_flask.config.Config.SSL_KEY_FILE", custom)
+        from py_flask.config import Config as C
 
         assert C.SSL_KEY_FILE == custom

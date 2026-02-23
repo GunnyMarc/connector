@@ -6,11 +6,11 @@ from pathlib import Path
 
 import pytest
 
-from src.app import create_app
-from src.models.site import Site
-from src.services.crypto_service import CryptoService
-from src.services.settings_service import SettingsService
-from src.services.storage import SiteStorage
+from py_flask.app import create_app
+from py_flask.models.site import Site
+from py_flask.services.crypto_service import CryptoService
+from py_flask.services.settings_service import SettingsService
+from py_flask.services.storage import SiteStorage
 
 
 @pytest.fixture()
@@ -77,14 +77,14 @@ def app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     data_dir = tmp_path / "data"
     data_dir.mkdir()
 
-    monkeypatch.setattr("src.config.Config.DATA_DIR", data_dir)
-    monkeypatch.setattr("src.config.Config.SITES_FILE", data_dir / "sites.enc")
-    monkeypatch.setattr("src.config.Config.SETTINGS_FILE", data_dir / "settings.enc")
-    monkeypatch.setattr("src.config.Config.KEY_FILE", data_dir / ".key")
-    monkeypatch.setattr("src.config.Config.SECRET_KEY", "test-secret-key")
-    monkeypatch.setattr("src.config.Config.SSL_ENABLED", False)
-    monkeypatch.setattr("src.config.Config.SSL_CERT_FILE", data_dir / "cert.pem")
-    monkeypatch.setattr("src.config.Config.SSL_KEY_FILE", data_dir / "key.pem")
+    monkeypatch.setattr("py_flask.config.Config.DATA_DIR", data_dir)
+    monkeypatch.setattr("py_flask.config.Config.SITES_FILE", data_dir / "sites.enc")
+    monkeypatch.setattr("py_flask.config.Config.SETTINGS_FILE", data_dir / "settings.enc")
+    monkeypatch.setattr("py_flask.config.Config.KEY_FILE", data_dir / ".key")
+    monkeypatch.setattr("py_flask.config.Config.SECRET_KEY", "test-secret-key")
+    monkeypatch.setattr("py_flask.config.Config.SSL_ENABLED", False)
+    monkeypatch.setattr("py_flask.config.Config.SSL_CERT_FILE", data_dir / "cert.pem")
+    monkeypatch.setattr("py_flask.config.Config.SSL_KEY_FILE", data_dir / "key.pem")
 
     application = create_app()
     application.config["TESTING"] = True

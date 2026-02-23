@@ -8,9 +8,9 @@ from unittest.mock import patch
 
 from flask.testing import FlaskClient
 
-from src.models.site import Site
-from src.services.settings_service import SettingsService
-from src.services.storage import SiteStorage
+from py_flask.models.site import Site
+from py_flask.services.settings_service import SettingsService
+from py_flask.services.storage import SiteStorage
 
 
 # ── Helper ────────────────────────────────────────────────────────────────────
@@ -221,7 +221,7 @@ class TestSettingsRoute:
         )
         assert resp.status_code == 200
 
-        from src.services.settings_service import SettingsService
+        from py_flask.services.settings_service import SettingsService
         svc: SettingsService = app.config["SETTINGS"]
         settings = svc.get_all()
         assert settings["default_port"] == 2222
@@ -968,7 +968,7 @@ class TestBrowseKey:
 
     def test_returns_json(self, client: FlaskClient) -> None:
         """Endpoint returns JSON with a 'path' key."""
-        with patch("src.routes.sites.subprocess.run") as mock_run:
+        with patch("py_flask.routes.sites.subprocess.run") as mock_run:
             mock_run.return_value.returncode = 1  # cancelled
             mock_run.return_value.stdout = ""
             resp = client.post("/api/browse-key")
@@ -982,7 +982,7 @@ class TestBrowseKey:
     ) -> None:
         """On macOS, returns the path chosen via osascript."""
         app.config["PLATFORM_INFO"].system = "Darwin"
-        with patch("src.routes.sites.subprocess.run") as mock_run:
+        with patch("py_flask.routes.sites.subprocess.run") as mock_run:
             mock_run.return_value.returncode = 0
             mock_run.return_value.stdout = "/Users/me/.ssh/id_ed25519\n"
             resp = client.post("/api/browse-key")
@@ -994,7 +994,7 @@ class TestBrowseKey:
     ) -> None:
         """When the user cancels the dialog, path is empty."""
         app.config["PLATFORM_INFO"].system = "Darwin"
-        with patch("src.routes.sites.subprocess.run") as mock_run:
+        with patch("py_flask.routes.sites.subprocess.run") as mock_run:
             mock_run.return_value.returncode = 1
             mock_run.return_value.stdout = ""
             resp = client.post("/api/browse-key")
@@ -1006,8 +1006,8 @@ class TestBrowseKey:
     ) -> None:
         """On Linux with zenity, returns the selected path."""
         app.config["PLATFORM_INFO"].system = "Linux"
-        with patch("src.routes.sites.shutil.which", return_value="/usr/bin/zenity"):
-            with patch("src.routes.sites.subprocess.run") as mock_run:
+        with patch("py_flask.routes.sites.shutil.which", return_value="/usr/bin/zenity"):
+            with patch("py_flask.routes.sites.subprocess.run") as mock_run:
                 mock_run.return_value.returncode = 0
                 mock_run.return_value.stdout = "/home/user/.ssh/id_rsa\n"
                 resp = client.post("/api/browse-key")
@@ -1022,7 +1022,7 @@ class TestBrowseKey:
 
         app.config["PLATFORM_INFO"].system = "Darwin"
         with patch(
-            "src.routes.sites.subprocess.run",
+            "py_flask.routes.sites.subprocess.run",
             side_effect=sp.TimeoutExpired("osascript", 120),
         ):
             resp = client.post("/api/browse-key")

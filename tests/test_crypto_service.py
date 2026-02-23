@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from src.services.crypto_service import CryptoService
+from py_flask.services.crypto_service import CryptoService
 
 
 class TestKeyManagement:

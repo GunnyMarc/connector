@@ -271,7 +271,7 @@ cp .env.example .env
 | `SSH_TIMEOUT` | `10` | SSH connection timeout in seconds |
 | `SSH_COMMAND_TIMEOUT` | `30` | SSH command execution timeout in seconds |
 
-All configuration is centralised in `src/config.py` and read from environment variables with sensible defaults. You never need a `.env` file for local development -- the defaults work out of the box.
+All configuration is centralised in `py_flask/config.py` and read from environment variables with sensible defaults. You never need a `.env` file for local development -- the defaults work out of the box.
 
 ---
 
@@ -293,7 +293,7 @@ connector/
 │
 ├── logs/                        # Debug log files (git-ignored)
 │
-├── src/                         # Python/Flask web UI
+├── py_flask/                    # Python/Flask web UI
 │   ├── app.py                   # Flask application factory + context processor
 │   ├── config.py                # Centralised configuration from env vars
 │   │
@@ -373,7 +373,7 @@ connector/
                                     v
 +-----------------------------------------------------------------------+
 |                          Flask Application                            |
-|                          (src/app.py)                                 |
+|                          (py_flask/app.py)                                 |
 |                                                                       |
 |   +-------------------+  +------------------+  +-------------------+  |
 |   |    sites_bp       |  | connections_bp   |  |   settings_bp     |  |
@@ -667,10 +667,10 @@ For production deployments, use Gunicorn instead of the built-in Flask server:
 source connector_venv/bin/activate
 
 # Run with Gunicorn
-gunicorn "src.app:create_app()" --bind 127.0.0.1:5101
+gunicorn "py_flask.app:create_app()" --bind 127.0.0.1:5101
 
 # Or with multiple workers
-gunicorn "src.app:create_app()" --bind 127.0.0.1:5101 --workers 4
+gunicorn "py_flask.app:create_app()" --bind 127.0.0.1:5101 --workers 4
 ```
 
 Set `FLASK_SECRET_KEY` to a stable value in `.env` so sessions persist across restarts:
@@ -694,7 +694,7 @@ source connector_venv/bin/activate
 pip install -r requirements.txt
 
 # Run the application
-python -m src.app
+python -m py_flask.app
 ```
 
 ### Linting and Formatting
@@ -709,7 +709,7 @@ ruff format .
 ruff format --check .    # Check only (for CI)
 
 # Type-check with mypy
-mypy src/
+mypy py_flask/
 ```
 
 ### Running Tests
@@ -730,7 +730,7 @@ pytest tests/test_storage.py
 pytest -k "test_create_site"
 
 # With coverage report
-pytest --cov=src --cov-report=term-missing
+pytest --cov=py_flask --cov-report=term-missing
 ```
 
 | Test File | Tests | Coverage |

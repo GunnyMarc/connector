@@ -10,8 +10,8 @@ import json
 from pathlib import Path
 from typing import Optional
 
-from src.models.site import Site
-from src.services.crypto_service import CryptoService
+from py_flask.models.site import Site
+from py_flask.services.crypto_service import CryptoService
 
 
 class SiteStorage:

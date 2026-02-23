@@ -134,7 +134,7 @@ class TerminalService:
         """Open an interactive session in the native terminal.
 
         Dispatches to the correct command builder based on ``site.protocol``.
-        Accepts a :class:`~src.models.site.Site` instance (or any object
+        Accepts a :class:`~py_flask.models.site.Site` instance (or any object
         with the same attributes).
 
         Raises :class:`RuntimeError` on unsupported protocol or launch failure.

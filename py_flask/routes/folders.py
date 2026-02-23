@@ -18,8 +18,8 @@ from flask import (
     url_for,
 )
 
-from src.services.settings_service import SettingsService
-from src.services.storage import SiteStorage
+from py_flask.services.settings_service import SettingsService
+from py_flask.services.storage import SiteStorage
 
 folders_bp = Blueprint("folders", __name__)
 

@@ -16,9 +16,9 @@ from flask import (
     url_for,
 )
 
-from src.services.ssh_service import SSHService
-from src.services.storage import SiteStorage
-from src.services.terminal_service import PlatformInfo, TerminalService
+from py_flask.services.ssh_service import SSHService
+from py_flask.services.storage import SiteStorage
+from py_flask.services.terminal_service import PlatformInfo, TerminalService
 
 connections_bp = Blueprint("connections", __name__)
 

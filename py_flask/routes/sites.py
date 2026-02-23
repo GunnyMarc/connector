@@ -17,8 +17,8 @@ from flask import (
     url_for,
 )
 
-from src.models.site import Site
-from src.services.storage import SiteStorage
+from py_flask.models.site import Site
+from py_flask.services.storage import SiteStorage
 
 sites_bp = Blueprint("sites", __name__)
 

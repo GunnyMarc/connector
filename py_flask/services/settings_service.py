@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from src.services.crypto_service import CryptoService
+from py_flask.services.crypto_service import CryptoService
 
 
 class SettingsService:

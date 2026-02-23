@@ -7,15 +7,15 @@ from typing import Any
 
 from flask import Flask, request
 
-from src.config import Config
-from src.routes.connections import connections_bp
-from src.routes.folders import folders_bp
-from src.routes.settings import settings_bp
-from src.routes.sites import sites_bp
-from src.services.crypto_service import CryptoService
-from src.services.settings_service import SettingsService
-from src.services.storage import SiteStorage
-from src.services.terminal_service import TerminalService, detect_platform
+from py_flask.config import Config
+from py_flask.routes.connections import connections_bp
+from py_flask.routes.folders import folders_bp
+from py_flask.routes.settings import settings_bp
+from py_flask.routes.sites import sites_bp
+from py_flask.services.crypto_service import CryptoService
+from py_flask.services.settings_service import SettingsService
+from py_flask.services.storage import SiteStorage
+from py_flask.services.terminal_service import TerminalService, detect_platform
 
 
 # ── Folder tree builder ───────────────────────────────────────────────────────
@@ -155,7 +155,7 @@ if __name__ == "__main__":
     # Build SSL context when HTTPS is enabled.
     ssl_ctx = None
     if Config.SSL_ENABLED:
-        from src.services.ssl_service import ensure_ssl_certs
+        from py_flask.services.ssl_service import ensure_ssl_certs
 
         cert, key = ensure_ssl_certs(
             Config.SSL_CERT_FILE,

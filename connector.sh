@@ -86,7 +86,7 @@ do_start() {
     echo "  Connector starting on $SCHEME://$HOST:$PORT"
     echo "──────────────────────────────────────────"
 
-    nohup python -m src.app > /dev/null 2>&1 &
+    nohup python -m py_flask.app > /dev/null 2>&1 &
     local pid=$!
     echo "$pid" > "$PID_FILE"
 
@@ -151,7 +151,7 @@ do_debug() {
     echo "  Press Ctrl+C to stop"
     echo "──────────────────────────────────────────"
 
-    FLASK_DEBUG=1 python -m src.app 2>&1 | tee "$log_file"
+    FLASK_DEBUG=1 python -m py_flask.app 2>&1 | tee "$log_file"
 }
 
 do_clear_cache() {

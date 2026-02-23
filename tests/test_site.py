@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from src.models.site import PROTOCOL_LABELS, PROTOCOLS, Site
+from py_flask.models.site import PROTOCOL_LABELS, PROTOCOLS, Site
 
 
 class TestSiteCreation:

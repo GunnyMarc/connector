@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from src.services.settings_service import SettingsService
+from py_flask.services.settings_service import SettingsService
 
 
 class TestSettingsDefaults:
