@@ -7,12 +7,11 @@ import SwiftUI
 
 struct SidebarView: View {
     @Environment(SiteStore.self) private var store
+    @Environment(\.openSettings) private var openSettings
 
     @Binding var showNewSiteForm: Bool
     @Binding var showQuickConnect: Bool
-    @Binding var showSettings: Bool
     @Binding var editingSite: Site?
-    @Binding var sftpSite: Site?
 
     @State private var newFolderName = ""
     @State private var showNewFolderAlert = false
@@ -27,8 +26,7 @@ struct SidebarView: View {
             ForEach(store.folderTree) { node in
                 FolderSectionView(
                     node: node,
-                    editingSite: $editingSite,
-                    sftpSite: $sftpSite
+                    editingSite: $editingSite
                 )
             }
 
@@ -37,8 +35,7 @@ struct SidebarView: View {
                 ForEach(store.rootSites) { site in
                     SiteRowView(
                         site: site,
-                        editingSite: $editingSite,
-                        sftpSite: $sftpSite
+                        editingSite: $editingSite
                     )
                 }
             }
@@ -57,7 +54,7 @@ struct SidebarView: View {
                 Menu {
                     Button("Quick Connect...", action: { showQuickConnect = true })
                     Divider()
-                    Button("Settings...", action: { showSettings = true })
+                    Button("Settings...", action: { openSettings() })
                 } label: {
                     Label("More", systemImage: "ellipsis.circle")
                 }
@@ -110,7 +107,6 @@ struct FolderSectionView: View {
 
     let node: FolderNode
     @Binding var editingSite: Site?
-    @Binding var sftpSite: Site?
 
     var body: some View {
         DisclosureGroup {
@@ -118,8 +114,7 @@ struct FolderSectionView: View {
             ForEach(node.children) { child in
                 FolderSectionView(
                     node: child,
-                    editingSite: $editingSite,
-                    sftpSite: $sftpSite
+                    editingSite: $editingSite
                 )
             }
 
@@ -127,8 +122,7 @@ struct FolderSectionView: View {
             ForEach(node.sites) { site in
                 SiteRowView(
                     site: site,
-                    editingSite: $editingSite,
-                    sftpSite: $sftpSite
+                    editingSite: $editingSite
                 )
             }
         } label: {
@@ -153,10 +147,10 @@ struct FolderSectionView: View {
 /// A single site entry in the sidebar list.
 struct SiteRowView: View {
     @Environment(SiteStore.self) private var store
+    @Environment(\.openWindow) private var openWindow
 
     let site: Site
     @Binding var editingSite: Site?
-    @Binding var sftpSite: Site?
 
     var body: some View {
         HStack {
@@ -183,7 +177,7 @@ struct SiteRowView: View {
 
             if site.isSSH {
                 Button("SFTP Browser...") {
-                    sftpSite = site
+                    openWindow(id: "sftp", value: site.id)
                 }
             }
 

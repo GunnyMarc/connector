@@ -37,6 +37,7 @@ struct PlatformInfo: Sendable {
     let systemLabel: String    // Always "macOS"
     let terminal: String       // "iTerm" or "Terminal"
     let hasSshpass: Bool       // Whether sshpass is on PATH
+    let hasExpect: Bool        // Whether expect is on PATH
 }
 
 // MARK: - Terminal Service
@@ -62,12 +63,14 @@ final class TerminalService: Sendable {
         }
 
         let hasSshpass = Self.which("sshpass") != nil
+        let hasExpect = Self.which("expect") != nil
 
         return PlatformInfo(
             system: "Darwin",
             systemLabel: "macOS",
             terminal: terminal,
-            hasSshpass: hasSshpass
+            hasSshpass: hasSshpass,
+            hasExpect: hasExpect
         )
     }
 
@@ -110,7 +113,7 @@ final class TerminalService: Sendable {
         keyPath: String = "",
         password: String = ""
     ) throws {
-        let cmd = buildSSHCommand(
+        let cmd = try buildSSHCommand(
             hostname: hostname,
             port: port,
             username: username,
@@ -126,7 +129,7 @@ final class TerminalService: Sendable {
     private func buildCommandForProtocol(site: Site) throws -> String {
         switch site.connectionProtocol {
         case .ssh2, .ssh1:
-            return buildSSHCommand(
+            return try buildSSHCommand(
                 hostname: site.hostname,
                 port: site.port,
                 username: site.username,
@@ -171,7 +174,45 @@ final class TerminalService: Sendable {
         return ["screen", portPath, String(serialBaud)].map(\.shellQuoted).joined(separator: " ")
     }
 
-    /// Build a shell-safe `ssh` command string.
+    /// Build SSH command arguments as an array (no shell quoting).
+    private func buildSSHArgsArray(
+        hostname: String,
+        port: Int,
+        username: String,
+        keyPath: String = "",
+        isPasswordAuth: Bool = false,
+        sshVersion: Int = 2
+    ) -> [String] {
+        var args = ["ssh", "-o", "StrictHostKeyChecking=no"]
+        if sshVersion == 1 {
+            args += ["-o", "Protocol=1"]
+        }
+        if !keyPath.isEmpty {
+            let expanded = NSString(string: keyPath).expandingTildeInPath
+            args += ["-i", expanded]
+        }
+        if isPasswordAuth {
+            // Disable pubkey to avoid "Too many authentication failures"
+            args += ["-o", "PubkeyAuthentication=no"]
+            args += ["-o", "PreferredAuthentications=keyboard-interactive,password"]
+        }
+        if port != 22 {
+            args += ["-p", String(port)]
+        }
+        if !username.isEmpty {
+            args.append("\(username)@\(hostname)")
+        } else {
+            args.append(hostname)
+        }
+        return args
+    }
+
+    /// Build the terminal command for an SSH session, with password automation.
+    ///
+    /// Password handling priority:
+    ///   1. `sshpass` (if installed) — most reliable
+    ///   2. `expect` (built into macOS) — writes a temp script for auto-login
+    ///   3. Plain `ssh` — user enters password manually
     private func buildSSHCommand(
         hostname: String,
         port: Int,
@@ -179,32 +220,100 @@ final class TerminalService: Sendable {
         keyPath: String = "",
         password: String = "",
         sshVersion: Int = 2
-    ) -> String {
-        var parts = ["ssh"]
-        if sshVersion == 1 {
-            parts += ["-o", "Protocol=1"]
-        }
-        if !keyPath.isEmpty {
-            let expanded = NSString(string: keyPath).expandingTildeInPath
-            parts += ["-i", expanded]
-        }
-        if port != 22 {
-            parts += ["-p", String(port)]
-        }
-        if !username.isEmpty {
-            parts.append("\(username)@\(hostname)")
-        } else {
-            parts.append(hostname)
-        }
+    ) throws -> String {
+        let isPasswordAuth = !password.isEmpty && keyPath.isEmpty
+        let args = buildSSHArgsArray(
+            hostname: hostname,
+            port: port,
+            username: username,
+            keyPath: keyPath,
+            isPasswordAuth: isPasswordAuth,
+            sshVersion: sshVersion
+        )
+        let sshCmd = args.map(\.shellQuoted).joined(separator: " ")
 
-        let sshCmd = parts.map(\.shellQuoted).joined(separator: " ")
+        guard !password.isEmpty else { return sshCmd }
 
-        if !password.isEmpty && platformInfo.hasSshpass {
+        // 1. Prefer sshpass if available.
+        if platformInfo.hasSshpass {
             let safePw = password.shellQuoted
             return "export SSHPASS=\(safePw); sshpass -e \(sshCmd); unset SSHPASS"
         }
 
+        // 2. Use expect to auto-fill the password in the terminal.
+        if platformInfo.hasExpect {
+            let scriptURL = try createExpectLoginScript(sshArgs: args, password: password)
+            return "\(scriptURL.path.shellQuoted); rm -f \(scriptURL.path.shellQuoted)"
+        }
+
+        // 3. No helper available — plain ssh (user enters password manually).
         return sshCmd
+    }
+
+    // MARK: - Expect Script for Interactive Password Auth
+
+    /// Create a temporary `expect` script for automated SSH password login.
+    ///
+    /// The script spawns the SSH session, waits for a password/passphrase
+    /// prompt, sends the stored password, then hands control to the user
+    /// via `interact`. The terminal command arranges for the script to be
+    /// deleted after the session ends.
+    private func createExpectLoginScript(sshArgs: [String], password: String) throws -> URL {
+        let fm = FileManager.default
+        let scriptURL = fm.temporaryDirectory.appendingPathComponent(
+            "connector_\(UUID().uuidString).exp"
+        )
+
+        let spawnLine = "spawn " + sshArgs.map { tclQuote($0) }.joined(separator: " ")
+        let tclPassword = tclEscapeForDoubleQuotes(password)
+
+        let script = """
+        #!/usr/bin/expect -f
+        set timeout 30
+        \(spawnLine)
+        expect {
+            -re {[Pp]ass(word|phrase)} {
+                send "\(tclPassword)\\r"
+                interact
+            }
+            timeout {
+                puts "\\nConnection timed out."
+                exit 1
+            }
+            eof {
+                puts "\\nConnection closed."
+                exit 1
+            }
+        }
+        """
+
+        try script.write(to: scriptURL, atomically: true, encoding: .utf8)
+        try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: scriptURL.path)
+        return scriptURL
+    }
+
+    /// Quote a string for use as a Tcl word argument.
+    ///
+    /// Uses braces for strings containing spaces or special characters,
+    /// falling back to double-quote escaping when braces can't be used.
+    private func tclQuote(_ s: String) -> String {
+        let safe = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_.=@:/,+"))
+        if s.unicodeScalars.allSatisfy({ safe.contains($0) }) {
+            return s
+        }
+        if !s.contains("{") && !s.contains("}") {
+            return "{\(s)}"
+        }
+        return "\"\(tclEscapeForDoubleQuotes(s))\""
+    }
+
+    /// Escape a string for use inside Tcl double quotes.
+    private func tclEscapeForDoubleQuotes(_ s: String) -> String {
+        s.replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+            .replacingOccurrences(of: "$", with: "\\$")
+            .replacingOccurrences(of: "[", with: "\\[")
+            .replacingOccurrences(of: "]", with: "\\]")
     }
 
     // MARK: - macOS Terminal Launcher

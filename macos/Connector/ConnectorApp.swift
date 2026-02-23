@@ -71,14 +71,33 @@ struct ConnectorApp: App {
                 }
                 .keyboardShortcut("k")
             }
+        }
 
-            // View menu
-            CommandGroup(after: .toolbar) {
-                Button("Settings...") {
-                    NotificationCenter.default.post(name: .settingsRequested, object: nil)
+        // SFTP browser (opened as a resizable window)
+        WindowGroup("SFTP Browser", id: "sftp", for: String.self) { $siteID in
+            Group {
+                if let siteID,
+                   let site = siteStore.sites.first(where: { $0.id == siteID })
+                {
+                    SFTPBrowserView(site: site)
+                } else {
+                    ContentUnavailableView(
+                        "Site Not Found",
+                        systemImage: "exclamationmark.triangle",
+                        description: Text("The requested site could not be found.")
+                    )
                 }
-                .keyboardShortcut(",")
             }
+            .environment(siteStore)
+            .environment(settingsStore)
+        }
+        .defaultSize(width: 700, height: 500)
+
+        // Settings window (Cmd+, from app menu)
+        Settings {
+            SettingsView()
+                .environment(siteStore)
+                .environment(settingsStore)
         }
     }
 }
@@ -88,5 +107,4 @@ struct ConnectorApp: App {
 extension Notification.Name {
     static let newSiteRequested = Notification.Name("newSiteRequested")
     static let quickConnectRequested = Notification.Name("quickConnectRequested")
-    static let settingsRequested = Notification.Name("settingsRequested")
 }

@@ -1,8 +1,9 @@
 /// Main content view with NavigationSplitView layout.
 ///
-/// Three-column layout: sidebar (folders + sites), detail (site info or form),
-/// and optional inspector. Mirrors the Python app's index.html + sidebar.
+/// Two-column layout: sidebar (folders + sites) and detail (site info or form).
+/// Mirrors the Python app's index.html + sidebar.
 
+import Combine
 import SwiftUI
 
 /// Root layout view using a two-column NavigationSplitView.
@@ -12,9 +13,7 @@ struct ContentView: View {
 
     @State private var showNewSiteForm = false
     @State private var showQuickConnect = false
-    @State private var showSettings = false
     @State private var editingSite: Site?
-    @State private var sftpSite: Site?
     @State private var columnVisibility = NavigationSplitViewVisibility.all
 
     var body: some View {
@@ -24,17 +23,14 @@ struct ContentView: View {
             SidebarView(
                 showNewSiteForm: $showNewSiteForm,
                 showQuickConnect: $showQuickConnect,
-                showSettings: $showSettings,
-                editingSite: $editingSite,
-                sftpSite: $sftpSite
+                editingSite: $editingSite
             )
             .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 360)
         } detail: {
             if let site = store.selectedSite {
                 SiteDetailView(
                     site: site,
-                    editingSite: $editingSite,
-                    sftpSite: $sftpSite
+                    editingSite: $editingSite
                 )
             } else {
                 emptyState
@@ -49,12 +45,6 @@ struct ContentView: View {
         .sheet(isPresented: $showQuickConnect) {
             QuickConnectView()
         }
-        .sheet(isPresented: $showSettings) {
-            SettingsView()
-        }
-        .sheet(item: $sftpSite) { site in
-            SFTPBrowserView(site: site)
-        }
         .alert("Error", isPresented: .init(
             get: { store.errorMessage != nil },
             set: { if !$0 { store.errorMessage = nil } }
@@ -64,6 +54,13 @@ struct ContentView: View {
             Text(store.errorMessage ?? "")
         }
         .frame(minWidth: 700, minHeight: 450)
+        // Handle menu bar commands via NotificationCenter
+        .onReceive(NotificationCenter.default.publisher(for: .newSiteRequested)) { _ in
+            showNewSiteForm = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .quickConnectRequested)) { _ in
+            showQuickConnect = true
+        }
     }
 
     private var emptyState: some View {

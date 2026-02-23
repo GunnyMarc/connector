@@ -13,7 +13,6 @@ import UniformTypeIdentifiers
 struct SettingsView: View {
     @Environment(SiteStore.self) private var store
     @Environment(SettingsStore.self) private var settingsStore
-    @Environment(\.dismiss) private var dismiss
 
     @State private var statusMessage: String?
     @State private var statusIsError: Bool = false
@@ -25,18 +24,6 @@ struct SettingsView: View {
         @Bindable var settingsStore = settingsStore
 
         VStack(spacing: 0) {
-            // Header
-            HStack {
-                Text("Settings")
-                    .font(.headline)
-                Spacer()
-                Button("Cancel") { dismiss() }
-                    .keyboardShortcut(.cancelAction)
-            }
-            .padding()
-
-            Divider()
-
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     // ── Platform (read-only) ─────────────────────────
@@ -308,7 +295,8 @@ struct SettingsView: View {
         if settingsStore.save() {
             // Reload the SiteStore so folder changes propagate.
             store.reload()
-            dismiss()
+            statusMessage = "Settings saved."
+            statusIsError = false
         } else {
             statusMessage = settingsStore.errorMessage ?? "Save failed."
             statusIsError = true

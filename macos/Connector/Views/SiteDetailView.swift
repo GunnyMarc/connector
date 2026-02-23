@@ -7,10 +7,10 @@ import SwiftUI
 
 struct SiteDetailView: View {
     @Environment(SiteStore.self) private var store
+    @Environment(\.openWindow) private var openWindow
 
     let site: Site
     @Binding var editingSite: Site?
-    @Binding var sftpSite: Site?
 
     @State private var showDeleteConfirmation = false
 
@@ -41,7 +41,7 @@ struct SiteDetailView: View {
                         .buttonStyle(.borderedProminent)
 
                         if site.isSSH {
-                            Button(action: { sftpSite = site }) {
+                            Button(action: { openWindow(id: "sftp", value: site.id) }) {
                                 Label("SFTP", systemImage: "folder")
                             }
                         }

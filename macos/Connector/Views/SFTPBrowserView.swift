@@ -89,7 +89,7 @@ struct SFTPBrowserView: View {
                 fileList
             }
         }
-        .frame(width: 600, height: 450)
+        .frame(minWidth: 500, idealWidth: 700, minHeight: 350, idealHeight: 500)
         .onAppear {
             currentPath = site.sftpRoot.isEmpty ? "" : site.sftpRoot
             refresh()
