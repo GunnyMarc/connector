@@ -1,0 +1,43 @@
+name: Connector
+options:
+  bundleIdPrefix: com.gunnymarc
+  deploymentTarget:
+    macOS: "26.0"
+  xcodeVersion: "16.0"
+  generateEmptyDirectories: true
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    MACOSX_DEPLOYMENT_TARGET: "26.0"
+    PRODUCT_BUNDLE_IDENTIFIER: com.gunnymarc.connector
+    MARKETING_VERSION: "1.0.0"
+    CURRENT_PROJECT_VERSION: "1"
+    DEVELOPMENT_TEAM: ""
+    CODE_SIGN_IDENTITY: "-"
+    CODE_SIGN_STYLE: Manual
+    ENABLE_APP_SANDBOX: "NO"
+    SWIFT_STRICT_CONCURRENCY: complete
+
+targets:
+  Connector:
+    type: application
+    platform: macOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: Connector
+        excludes:
+          - "**/.DS_Store"
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: "YES"
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.utilities
+        INFOPLIST_KEY_CFBundleDisplayName: Connector
+        INFOPLIST_KEY_NSAppleEventsUsageDescription: >-
+          Connector needs to send AppleEvents to open terminal sessions.
+        INFOPLIST_KEY_NSDesktopFolderUsageDescription: >-
+          Connector needs file access for SSH key selection and SFTP transfers.
+        ENABLE_APP_SANDBOX: "NO"
+        CODE_SIGN_ENTITLEMENTS: Connector/Connector.entitlements
+    entitlements:
+      path: Connector/Connector.entitlements
