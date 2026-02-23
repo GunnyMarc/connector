@@ -18,6 +18,7 @@ data/.key
 data/*.enc
 data/*.pid
 AGENTS.md
+tests/
 
 # Logs
 logs/
