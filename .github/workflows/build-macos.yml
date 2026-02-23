@@ -40,6 +40,16 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             build
 
+      - name: Run tests
+        working-directory: macos
+        run: |
+          xcodebuild -project Connector.xcodeproj \
+            -scheme ConnectorTests \
+            -configuration Debug \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_ALLOWED=NO \
+            test
+
       - name: Package app bundle
         working-directory: macos
         run: |

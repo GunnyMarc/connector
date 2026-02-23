@@ -6,5 +6,8 @@ build/
 DerivedData/
 *.xcworkspace/xcuserdata/
 
+# Swift tests (local only, like Python tests/)
+ConnectorTests/
+
 # macOS junk
 .DS_Store

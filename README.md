@@ -172,11 +172,11 @@ The workflow (`.github/workflows/build-macos.yml`) triggers on:
 
 ```
 macos/
-├── project.yml                          # xcodegen project spec
+├── project.yml                          # xcodegen project spec (app + test targets)
 ├── Connector/
 │   ├── ConnectorApp.swift               # @main entry point, service initialisation
 │   ├── Connector.entitlements           # Sandbox disabled (subprocess + AppleEvents access)
-│   ├── Assets.xcassets/                 # App icon and accent colour
+│   ├── Assets.xcassets/                 # App icon (real PNGs) and accent colour
 │   │
 │   ├── Models/
 │   │   ├── Site.swift                   # Site struct (14 fields), ConnectionProtocol, AuthType
@@ -201,6 +201,14 @@ macos/
 │       ├── SFTPBrowserView.swift        # Remote file browser (upload/download)
 │       ├── SettingsView.swift           # Settings form with export/import
 │       └── QuickConnectView.swift       # Quick connect sheet (user@host:port)
+│
+└── ConnectorTests/                      # Swift test suite (110 tests across 5 files)
+    ├── SiteTests.swift                  # Site model, enums, Codable, properties (21 tests)
+    ├── CryptoServiceTests.swift         # Key management, encrypt/decrypt (11 tests)
+    ├── StorageServiceTests.swift        # CRUD over encrypted storage (13 tests)
+    ├── SettingsServiceTests.swift       # Settings defaults, persistence (11 tests)
+    ├── TerminalServiceTests.swift       # Platform detection, quoting, errors (17 tests)
+    └── FolderTests.swift                # Folders, tree, CRUD, export/import (37 tests)
 ```
 
 **Key differences from the web UI:**
@@ -313,23 +321,34 @@ connector/
 │   │   ├── sftp.html            # SFTP file browser (upload / download)
 │   │   └── settings.html        # Global settings form
 │   │
-│   └── static/css/
-│       └── style.css            # Dark theme + two-panel layout styles
+│   └── static/
+│       ├── css/style.css        # Dark theme + two-panel layout styles
+│       ├── favicon.ico          # Multi-resolution favicon (16+32)
+│       ├── favicon-16x16.png
+│       ├── favicon-32x32.png
+│       ├── favicon-180x180.png  # Apple touch icon
+│       └── favicon-192x192.png  # Android/PWA icon
+│
+├── icons/                       # Shared icon assets (tracked in git)
+│   ├── connector-icon.svg       # Master SVG source
+│   ├── icon_*.png               # macOS app icon PNGs (16-1024px)
+│   └── favicon-*.png            # Web favicon PNGs
 │
 ├── macos/                       # Native macOS app (Swift/SwiftUI)
-│   ├── project.yml              # xcodegen project spec
-│   └── Connector/
-│       ├── ConnectorApp.swift   # @main entry point
-│       ├── Connector.entitlements
-│       ├── Assets.xcassets/
-│       ├── Models/              # Site, AppSettings, ConnectorError
-│       ├── Services/            # CryptoService, StorageService, SettingsService, TerminalService
-│       ├── ViewModels/          # SiteStore, SettingsStore
-│       └── Views/               # ContentView, SidebarView, SiteFormView, SiteDetailView,
-│                                #   SFTPBrowserView, SettingsView, QuickConnectView
+│   ├── project.yml              # xcodegen project spec (app + test targets)
+│   ├── Connector/
+│   │   ├── ConnectorApp.swift   # @main entry point
+│   │   ├── Connector.entitlements
+│   │   ├── Assets.xcassets/     # App icon PNGs and accent colour
+│   │   ├── Models/              # Site, AppSettings, ConnectorError
+│   │   ├── Services/            # CryptoService, StorageService, SettingsService, TerminalService
+│   │   ├── ViewModels/          # SiteStore, SettingsStore
+│   │   └── Views/               # ContentView, SidebarView, SiteFormView, SiteDetailView,
+│   │                            #   SFTPBrowserView, SettingsView, QuickConnectView
+│   └── ConnectorTests/          # Swift test suite (110 tests, 5 files)
 │
 ├── .github/workflows/
-│   └── build-macos.yml          # CI: build macOS app + upload artifact
+│   └── build-macos.yml          # CI: build + test macOS app, upload artifact
 │
 └── tests/
     ├── conftest.py              # Shared fixtures (app, client, crypto, storage)

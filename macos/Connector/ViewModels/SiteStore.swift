@@ -246,6 +246,72 @@ final class SiteStore {
         saveFolders()
     }
 
+    /// Reorder root-level folder nodes via drag-and-drop.
+    ///
+    /// Moves root folders (and their descendants) within the flat `folders`
+    /// array while preserving each subtree's internal order.
+    func moveRootFolders(from source: IndexSet, to destination: Int) {
+        var rootPaths = folderTree.map(\.path)
+        rootPaths.move(fromOffsets: source, toOffset: destination)
+
+        // Rebuild flat order: each root path followed by its subfolders.
+        var newOrder: [String] = []
+        for rootPath in rootPaths {
+            if folders.contains(rootPath) {
+                newOrder.append(rootPath)
+            }
+            let prefix = rootPath + folderSep
+            for f in folders where f.hasPrefix(prefix) {
+                if !newOrder.contains(f) {
+                    newOrder.append(f)
+                }
+            }
+        }
+
+        guard Set(newOrder) == Set(folders) else { return }
+        folders = newOrder
+        saveFolders()
+    }
+
+    /// Reorder child folders within a parent via drag-and-drop.
+    ///
+    /// Moves direct children of *parent* while preserving grandchildren order.
+    func moveChildFolders(parent: String, from source: IndexSet, to destination: Int) {
+        let prefix = parent + folderSep
+
+        // Direct children: paths under prefix with no further separators.
+        var directChildren = folders.filter { f in
+            guard f.hasPrefix(prefix) else { return false }
+            let remainder = f.dropFirst(prefix.count)
+            return !remainder.contains(folderSep)
+        }
+
+        directChildren.move(fromOffsets: source, toOffset: destination)
+
+        // Rebuild flat order preserving subtrees.
+        var newOrder: [String] = []
+        for f in folders {
+            // Skip anything under this parent — we'll re-insert in new order.
+            if f.hasPrefix(prefix) { continue }
+            newOrder.append(f)
+
+            // After the parent itself, insert the reordered children + subtrees.
+            if f == parent {
+                for childPath in directChildren {
+                    newOrder.append(childPath)
+                    let childPrefix = childPath + folderSep
+                    for sub in folders where sub.hasPrefix(childPrefix) {
+                        newOrder.append(sub)
+                    }
+                }
+            }
+        }
+
+        guard Set(newOrder) == Set(folders) else { return }
+        folders = newOrder
+        saveFolders()
+    }
+
     // MARK: - Connection Launch
 
     /// Launch a terminal session for a site.
@@ -403,29 +469,32 @@ final class SiteStore {
     }
 
     /// Build a recursive folder tree from a flat list of folder paths.
+    ///
+    /// Uses a two-phase approach to handle struct value semantics correctly:
+    /// Phase 1 — collect base nodes and parent→child path relationships.
+    /// Phase 2 — recursively construct each node so children are fully resolved.
     private func buildFolderTree(folderPaths: [String], allSites: [Site]) -> [FolderNode] {
-        // Build nodes
-        var nodes: [String: FolderNode] = [:]
+        // Phase 1: create base nodes with sites assigned.
+        var baseNodes: [String: FolderNode] = [:]
         var orderedPaths: [String] = []
 
         for path in folderPaths {
             let name = path.split(separator: Character(folderSep)).last.map(String.init) ?? path
-            nodes[path] = FolderNode(id: path, name: name, path: path, children: [], sites: [])
+            baseNodes[path] = FolderNode(id: path, name: name, path: path, children: [], sites: [])
             orderedPaths.append(path)
         }
 
-        // Assign sites to their folder node
         for site in allSites {
-            if !site.folder.isEmpty, nodes[site.folder] != nil {
-                nodes[site.folder]?.sites.append(site)
+            if !site.folder.isEmpty, baseNodes[site.folder] != nil {
+                baseNodes[site.folder]?.sites.append(site)
             }
         }
 
-        // Build tree: attach children to parents
-        var rootNodes: [FolderNode] = []
-        for path in orderedPaths {
-            guard let node = nodes[path] else { continue }
+        // Determine parent→child path relationships.
+        var childPathsOf: [String: [String]] = [:]
+        var rootPaths: [String] = []
 
+        for path in orderedPaths {
             let parentPath: String
             if path.contains(folderSep) {
                 parentPath = String(path[..<path.lastIndex(of: Character(folderSep))!])
@@ -433,13 +502,21 @@ final class SiteStore {
                 parentPath = ""
             }
 
-            if !parentPath.isEmpty, nodes[parentPath] != nil {
-                nodes[parentPath]?.children.append(node)
+            if !parentPath.isEmpty, baseNodes[parentPath] != nil {
+                childPathsOf[parentPath, default: []].append(path)
             } else {
-                rootNodes.append(node)
+                rootPaths.append(path)
             }
         }
 
-        return rootNodes
+        // Phase 2: recursively build each node so children are fully resolved
+        // (avoids struct copy-before-children-assigned problem).
+        func buildNode(for path: String) -> FolderNode? {
+            guard var node = baseNodes[path] else { return nil }
+            node.children = (childPathsOf[path] ?? []).compactMap { buildNode(for: $0) }
+            return node
+        }
+
+        return rootPaths.compactMap { buildNode(for: $0) }
     }
 }

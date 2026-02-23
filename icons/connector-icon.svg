@@ -1,0 +1,100 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <!-- Background gradient -->
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#1a2332"/>
+      <stop offset="100%" stop-color="#0d1520"/>
+    </linearGradient>
+    <!-- Accent gradient for terminal window -->
+    <linearGradient id="termBg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#1e293b"/>
+      <stop offset="100%" stop-color="#0f172a"/>
+    </linearGradient>
+    <!-- Glow for the prompt -->
+    <linearGradient id="promptGlow" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#38bdf8"/>
+      <stop offset="100%" stop-color="#818cf8"/>
+    </linearGradient>
+    <!-- Network node gradient -->
+    <radialGradient id="nodeGlow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.3"/>
+      <stop offset="100%" stop-color="#38bdf8" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- macOS rounded-rect background -->
+  <rect x="40" y="40" width="944" height="944" rx="212" ry="212" fill="url(#bg)"/>
+
+  <!-- Subtle border -->
+  <rect x="40" y="40" width="944" height="944" rx="212" ry="212"
+        fill="none" stroke="#334155" stroke-width="3"/>
+
+  <!-- Terminal window frame -->
+  <rect x="160" y="240" width="704" height="480" rx="24" ry="24"
+        fill="url(#termBg)" stroke="#475569" stroke-width="3"/>
+
+  <!-- Terminal title bar -->
+  <rect x="160" y="240" width="704" height="52" rx="24" ry="24" fill="#1e293b"/>
+  <rect x="160" y="268" width="704" height="24" fill="#1e293b"/>
+  <line x1="160" y1="292" x2="864" y2="292" stroke="#334155" stroke-width="2"/>
+
+  <!-- Title bar dots -->
+  <circle cx="200" cy="266" r="10" fill="#ef4444"/>
+  <circle cx="232" cy="266" r="10" fill="#eab308"/>
+  <circle cx="264" cy="266" r="10" fill="#22c55e"/>
+
+  <!-- Terminal prompt: >_ -->
+  <text x="220" y="420" font-family="Menlo, 'SF Mono', Monaco, 'Courier New', monospace"
+        font-size="120" font-weight="700" fill="url(#promptGlow)">
+    &gt;_
+  </text>
+
+  <!-- Cursor blink line -->
+  <rect x="432" y="350" width="6" height="84" rx="3" fill="#38bdf8" opacity="0.9"/>
+
+  <!-- Network connection lines emanating from terminal -->
+  <!-- Line 1: to top-right node -->
+  <line x1="680" y1="400" x2="800" y2="200" stroke="#38bdf8" stroke-width="4"
+        stroke-opacity="0.6" stroke-linecap="round"/>
+  <!-- Line 2: to right node -->
+  <line x1="740" y1="480" x2="900" y2="480" stroke="#818cf8" stroke-width="4"
+        stroke-opacity="0.5" stroke-linecap="round"/>
+  <!-- Line 3: to bottom-right node -->
+  <line x1="680" y1="580" x2="820" y2="760" stroke="#38bdf8" stroke-width="4"
+        stroke-opacity="0.4" stroke-linecap="round"/>
+
+  <!-- Network nodes (connection endpoints) -->
+  <!-- Node 1: top-right -->
+  <circle cx="800" cy="200" r="30" fill="url(#nodeGlow)"/>
+  <circle cx="800" cy="200" r="14" fill="#38bdf8"/>
+  <circle cx="800" cy="200" r="8" fill="#0f172a"/>
+
+  <!-- Node 2: right -->
+  <circle cx="900" cy="480" r="30" fill="url(#nodeGlow)"/>
+  <circle cx="900" cy="480" r="14" fill="#818cf8"/>
+  <circle cx="900" cy="480" r="8" fill="#0f172a"/>
+
+  <!-- Node 3: bottom-right -->
+  <circle cx="820" cy="760" r="30" fill="url(#nodeGlow)"/>
+  <circle cx="820" cy="760" r="14" fill="#38bdf8"/>
+  <circle cx="820" cy="760" r="8" fill="#0f172a"/>
+
+  <!-- SSH lock icon (small, bottom-left of terminal) -->
+  <g transform="translate(230, 530)">
+    <!-- Lock body -->
+    <rect x="0" y="18" width="40" height="30" rx="6" fill="#22c55e" opacity="0.8"/>
+    <!-- Lock shackle -->
+    <path d="M8 18 V12 A12 12 0 0 1 32 12 V18" fill="none" stroke="#22c55e"
+          stroke-width="5" stroke-linecap="round" opacity="0.8"/>
+    <!-- Keyhole -->
+    <circle cx="20" cy="33" r="5" fill="#0f172a"/>
+  </g>
+
+  <!-- "CONNECTOR" subtle text at bottom -->
+  <text x="512" y="830" text-anchor="middle"
+        font-family="'SF Pro Display', 'Helvetica Neue', Arial, sans-serif"
+        font-size="48" font-weight="600" letter-spacing="8"
+        fill="#64748b" opacity="0.6">
+    CONNECTOR
+  </text>
+</svg>

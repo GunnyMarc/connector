@@ -4,6 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Connector{% block title_suffix %}{% endblock %}</title>
+    <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='favicon.ico') }}">
+    <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='favicon-32x32.png') }}">
+    <link rel="icon" type="image/png" sizes="16x16" href="{{ url_for('static', filename='favicon-16x16.png') }}">
+    <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='favicon-180x180.png') }}">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
           rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css"
@@ -15,7 +19,8 @@
 <!-- ── Top bar ─────────────────────────────────────────────────────────────── -->
 <header class="app-topbar">
     <a class="app-brand" href="{{ url_for('sites.index') }}">
-        <i class="bi bi-hdd-network"></i> Connector
+        <img src="{{ url_for('static', filename='favicon-32x32.png') }}" alt=""
+             width="20" height="20" style="vertical-align: -2px; margin-right: 4px;">Connector
     </a>
     <form class="app-quick-connect" method="POST"
           action="{{ url_for('connections.quick_connect') }}">
@@ -201,7 +206,8 @@
     <main class="detail-panel">
         {% block working_pane %}
         <div class="detail-empty">
-            <i class="bi bi-hdd-network"></i>
+            <img src="{{ url_for('static', filename='favicon-192x192.png') }}" alt="Connector"
+                 width="80" height="80" style="opacity: 0.4; margin-bottom: 1rem;">
             <p>Select a session or add a new one.</p>
         </div>
         {% endblock %}

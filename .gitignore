@@ -33,10 +33,3 @@ logs/
 .DS_Store
 Thumbs.db
 
-# Testing
-tests/
-.pytest_cache/
-.coverage
-htmlcov/
-
-

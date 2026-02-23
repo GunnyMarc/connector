@@ -41,3 +41,19 @@ targets:
         CODE_SIGN_ENTITLEMENTS: Connector/Connector.entitlements
     entitlements:
       path: Connector/Connector.entitlements
+
+  ConnectorTests:
+    type: bundle.unit-test
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: ConnectorTests
+        excludes:
+          - "**/.DS_Store"
+    dependencies:
+      - target: Connector
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: "YES"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Connector.app/Contents/MacOS/Connector"
