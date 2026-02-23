@@ -4,6 +4,10 @@
 /// provides methods to launch interactive sessions via AppleScript and
 /// perform SFTP operations via `ssh`/`scp` subprocesses.
 ///
+/// For password-based SSH/SCP, uses OpenSSH's SSH_ASKPASS mechanism
+/// (built into macOS, no extra tools needed). Falls back to `sshpass`
+/// if available.
+///
 /// Mirrors the Python `TerminalService` class, simplified for macOS-only.
 
 import Foundation
@@ -242,6 +246,65 @@ final class TerminalService: Sendable {
         }
     }
 
+    // MARK: - SSH_ASKPASS Helper
+
+    /// Create a temporary askpass script that echoes the given password.
+    ///
+    /// OpenSSH's `SSH_ASKPASS` mechanism calls this script to obtain the
+    /// password non-interactively. This is built into macOS's `ssh` and
+    /// `scp` — no extra tools like `sshpass` are needed.
+    ///
+    /// Returns the URL to the temporary script. The caller must delete it
+    /// when done.
+    private func createAskpassScript(password: String) throws -> URL {
+        let fm = FileManager.default
+        let tempDir = fm.temporaryDirectory
+        let scriptURL = tempDir.appendingPathComponent("connector_askpass_\(UUID().uuidString).sh")
+
+        // Escape single quotes in the password for the shell script.
+        let escapedPassword = password.replacingOccurrences(of: "'", with: "'\\''")
+        let script = "#!/bin/sh\necho '\(escapedPassword)'\n"
+
+        try script.write(to: scriptURL, atomically: true, encoding: .utf8)
+        try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: scriptURL.path)
+
+        return scriptURL
+    }
+
+    /// Configure a Process's environment for SSH_ASKPASS-based password auth.
+    ///
+    /// Sets SSH_ASKPASS, SSH_ASKPASS_REQUIRE=force, and DISPLAY so that
+    /// ssh/scp call the askpass script instead of prompting on a terminal.
+    private func configurePasswordEnvironment(
+        process: Process,
+        password: String,
+        askpassURL: URL
+    ) {
+        var env = ProcessInfo.processInfo.environment
+        env["SSH_ASKPASS"] = askpassURL.path
+        env["SSH_ASKPASS_REQUIRE"] = "force"
+        env["DISPLAY"] = ":0"
+        process.environment = env
+    }
+
+    // MARK: - SSH options for password auth
+
+    /// SSH options that force password-only auth and skip key attempts.
+    ///
+    /// Without these, ssh tries every key in ~/.ssh/ first, each counting
+    /// as a failed attempt. After enough failures the server disconnects
+    /// with "Too many authentication failures".
+    private static let passwordAuthSSHOptions: [String] = [
+        "-o", "PubkeyAuthentication=no",
+        "-o", "PreferredAuthentications=keyboard-interactive,password",
+    ]
+
+    /// SCP options equivalent (same flags, SCP uses them too).
+    private static let passwordAuthSCPOptions: [String] = [
+        "-o", "PubkeyAuthentication=no",
+        "-o", "PreferredAuthentications=keyboard-interactive,password",
+    ]
+
     // MARK: - SFTP Operations via SSH Subprocess
 
     /// List remote directory contents by running `ls -la` over SSH.
@@ -277,7 +340,13 @@ final class TerminalService: Sendable {
 
     /// Download a remote file using `scp`.
     func sftpDownload(site: Site, remotePath: String, localPath: String) throws {
-        var args = ["-o", "StrictHostKeyChecking=no"]
+        var args = ["-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=10"]
+
+        let isPasswordAuth = site.authType == .password && !site.password.isEmpty
+
+        if isPasswordAuth {
+            args += Self.passwordAuthSCPOptions
+        }
         if site.port != 22 {
             args += ["-P", String(site.port)]
         }
@@ -295,20 +364,36 @@ final class TerminalService: Sendable {
         args.append(localPath)
 
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/scp")
-        process.arguments = args
+        var askpassURL: URL?
 
-        if site.authType == .password && !site.password.isEmpty && platformInfo.hasSshpass {
-            var env = ProcessInfo.processInfo.environment
-            env["SSHPASS"] = site.password
-            process.environment = env
-            process.executableURL = URL(fileURLWithPath: Self.which("sshpass") ?? "/usr/local/bin/sshpass")
-            process.arguments = ["-e", "scp"] + args
+        if isPasswordAuth {
+            if platformInfo.hasSshpass {
+                // Use sshpass if available
+                var env = ProcessInfo.processInfo.environment
+                env["SSHPASS"] = site.password
+                process.environment = env
+                process.executableURL = URL(fileURLWithPath: Self.which("sshpass") ?? "/usr/local/bin/sshpass")
+                process.arguments = ["-e", "scp"] + args
+            } else {
+                // Use SSH_ASKPASS (built into macOS OpenSSH)
+                let scriptURL = try createAskpassScript(password: site.password)
+                askpassURL = scriptURL
+                configurePasswordEnvironment(process: process, password: site.password, askpassURL: scriptURL)
+                process.executableURL = URL(fileURLWithPath: "/usr/bin/scp")
+                process.arguments = args
+            }
+        } else {
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/scp")
+            process.arguments = args
         }
 
         let errPipe = Pipe()
         process.standardError = errPipe
         process.standardOutput = FileHandle.nullDevice
+        // Detach from controlling terminal so SSH_ASKPASS is used.
+        process.standardInput = FileHandle.nullDevice
+
+        defer { if let url = askpassURL { try? FileManager.default.removeItem(at: url) } }
 
         try process.run()
         process.waitUntilExit()
@@ -322,7 +407,13 @@ final class TerminalService: Sendable {
 
     /// Upload a local file using `scp`.
     func sftpUpload(site: Site, localPath: String, remotePath: String) throws {
-        var args = ["-o", "StrictHostKeyChecking=no"]
+        var args = ["-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=10"]
+
+        let isPasswordAuth = site.authType == .password && !site.password.isEmpty
+
+        if isPasswordAuth {
+            args += Self.passwordAuthSCPOptions
+        }
         if site.port != 22 {
             args += ["-P", String(site.port)]
         }
@@ -341,20 +432,33 @@ final class TerminalService: Sendable {
         args.append(remote)
 
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/scp")
-        process.arguments = args
+        var askpassURL: URL?
 
-        if site.authType == .password && !site.password.isEmpty && platformInfo.hasSshpass {
-            var env = ProcessInfo.processInfo.environment
-            env["SSHPASS"] = site.password
-            process.environment = env
-            process.executableURL = URL(fileURLWithPath: Self.which("sshpass") ?? "/usr/local/bin/sshpass")
-            process.arguments = ["-e", "scp"] + args
+        if isPasswordAuth {
+            if platformInfo.hasSshpass {
+                var env = ProcessInfo.processInfo.environment
+                env["SSHPASS"] = site.password
+                process.environment = env
+                process.executableURL = URL(fileURLWithPath: Self.which("sshpass") ?? "/usr/local/bin/sshpass")
+                process.arguments = ["-e", "scp"] + args
+            } else {
+                let scriptURL = try createAskpassScript(password: site.password)
+                askpassURL = scriptURL
+                configurePasswordEnvironment(process: process, password: site.password, askpassURL: scriptURL)
+                process.executableURL = URL(fileURLWithPath: "/usr/bin/scp")
+                process.arguments = args
+            }
+        } else {
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/scp")
+            process.arguments = args
         }
 
         let errPipe = Pipe()
         process.standardError = errPipe
         process.standardOutput = FileHandle.nullDevice
+        process.standardInput = FileHandle.nullDevice
+
+        defer { if let url = askpassURL { try? FileManager.default.removeItem(at: url) } }
 
         try process.run()
         process.waitUntilExit()
@@ -371,6 +475,15 @@ final class TerminalService: Sendable {
     /// Execute a command on a remote host via `ssh` subprocess.
     func executeSSHCommand(site: Site, command: String) throws -> CommandResult {
         var args = ["-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=10"]
+
+        let isPasswordAuth = site.authType == .password && !site.password.isEmpty
+
+        // When using password auth, skip pubkey attempts to avoid
+        // "Too many authentication failures".
+        if isPasswordAuth {
+            args += Self.passwordAuthSSHOptions
+        }
+
         if site.authType == .key && !site.keyPath.isEmpty {
             args += ["-i", NSString(string: site.keyPath).expandingTildeInPath]
         }
@@ -387,13 +500,26 @@ final class TerminalService: Sendable {
         let process = Process()
         let outPipe = Pipe()
         let errPipe = Pipe()
+        var askpassURL: URL?
 
-        if site.authType == .password && !site.password.isEmpty && platformInfo.hasSshpass {
-            var env = ProcessInfo.processInfo.environment
-            env["SSHPASS"] = site.password
-            process.environment = env
-            process.executableURL = URL(fileURLWithPath: Self.which("sshpass") ?? "/usr/local/bin/sshpass")
-            process.arguments = ["-e", "ssh"] + args
+        if isPasswordAuth {
+            if platformInfo.hasSshpass {
+                // Prefer sshpass if installed
+                var env = ProcessInfo.processInfo.environment
+                env["SSHPASS"] = site.password
+                process.environment = env
+                process.executableURL = URL(fileURLWithPath: Self.which("sshpass") ?? "/usr/local/bin/sshpass")
+                process.arguments = ["-e", "ssh"] + args
+            } else {
+                // Use SSH_ASKPASS — built into macOS OpenSSH, no extra tools.
+                // Creates a temp script that echoes the password, tells ssh
+                // to call it via SSH_ASKPASS + SSH_ASKPASS_REQUIRE=force.
+                let scriptURL = try createAskpassScript(password: site.password)
+                askpassURL = scriptURL
+                configurePasswordEnvironment(process: process, password: site.password, askpassURL: scriptURL)
+                process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
+                process.arguments = args
+            }
         } else {
             process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
             process.arguments = args
@@ -401,6 +527,11 @@ final class TerminalService: Sendable {
 
         process.standardOutput = outPipe
         process.standardError = errPipe
+        // Detach stdin so ssh has no controlling terminal and uses SSH_ASKPASS.
+        process.standardInput = FileHandle.nullDevice
+
+        // Clean up the temp askpass script after the process finishes.
+        defer { if let url = askpassURL { try? FileManager.default.removeItem(at: url) } }
 
         try process.run()
         process.waitUntilExit()

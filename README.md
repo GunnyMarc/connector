@@ -1,8 +1,16 @@
 # Connector
 
-Multi-protocol session manager with a web UI, encrypted credential storage, and native terminal integration.
+Multi-protocol session manager with encrypted credential storage and native terminal integration. Available as a **cross-platform web UI** (Python/Flask) and a **native macOS app** (Swift/SwiftUI).
 
-Connector lets you organise remote sessions into folders, store credentials securely (Fernet AES encryption at rest), and launch connections directly in your platform's native terminal. Supports SSH2, SSH1, Local Shell, Raw TCP, Telnet, and Serial protocols. SSH sessions also include a browser-based SFTP file manager.
+Connector lets you organise remote sessions into folders, store credentials securely (encrypted at rest), and launch connections directly in your platform's native terminal. Supports SSH2, SSH1, Local Shell, Raw TCP, Telnet, and Serial protocols. SSH sessions also include an SFTP file manager.
+
+| | Web UI (Python) | Native macOS (Swift) |
+|---|---|---|
+| **Platforms** | macOS, Linux, Windows | macOS 14.0+ (Sonoma) |
+| **Encryption** | Fernet (AES-128-CBC) | AES-256-GCM (CryptoKit) |
+| **SFTP** | Paramiko (in-process) | ssh/scp subprocess |
+| **Terminal launch** | AppleScript, gnome-terminal, wt | AppleScript (iTerm / Terminal.app) |
+| **Data location** | `./data/` | `~/Library/Application Support/Connector/` |
 
 ---
 
@@ -11,6 +19,11 @@ Connector lets you organise remote sessions into folders, store credentials secu
 - [Features](#features)
 - [Requirements](#requirements)
 - [Quick Start](#quick-start)
+- [macOS Native App](#macos-native-app)
+  - [Building from Source](#building-from-source)
+  - [Packaging and Installing](#packaging-and-installing)
+  - [CI Build (GitHub Actions)](#ci-build-github-actions)
+  - [macOS App Architecture](#macos-app-architecture)
 - [CLI Reference](#cli-reference)
 - [Configuration](#configuration)
 - [Architecture](#architecture)
@@ -87,6 +100,123 @@ To stop:
 
 ---
 
+## macOS Native App
+
+The `macos/` directory contains a native SwiftUI application that mirrors all features of the web UI. It targets macOS 14.0+ (Sonoma) and uses CryptoKit AES-256-GCM for encrypted storage.
+
+### Building from Source
+
+**Prerequisites:** macOS with Xcode 16+ installed.
+
+```bash
+# Install xcodegen (one-time)
+brew install xcodegen
+
+# Generate the Xcode project and build
+cd macos
+xcodegen generate
+xcodebuild -project Connector.xcodeproj \
+  -scheme Connector \
+  -configuration Release \
+  build
+```
+
+Or open in Xcode and press **Cmd+R**:
+
+```bash
+cd macos
+xcodegen generate
+open Connector.xcodeproj
+```
+
+### Packaging and Installing
+
+After building, copy the `.app` bundle to `/Applications/`:
+
+```bash
+cd macos
+
+# Build release
+xcodebuild -project Connector.xcodeproj \
+  -scheme Connector \
+  -configuration Release \
+  -derivedDataPath ./build \
+  build
+
+# Install
+cp -R build/Build/Products/Release/Connector.app /Applications/
+
+# Launch
+open /Applications/Connector.app
+```
+
+The app is unsigned (ad-hoc signed). If macOS Gatekeeper blocks it, go to **System Settings > Privacy & Security > Open Anyway**.
+
+### CI Build (GitHub Actions)
+
+A GitHub Actions workflow automatically builds the macOS app and uploads it as a downloadable artifact. This is useful if you develop on Linux or want automated builds.
+
+The workflow (`.github/workflows/build-macos.yml`) triggers on:
+- Push to `main` that modifies `macos/**`
+- Pull requests targeting `main` that modify `macos/**`
+- Manual trigger via the GitHub Actions UI
+
+**To download a build:**
+1. Push code to GitHub.
+2. Go to the **Actions** tab in the repository.
+3. Click the completed workflow run.
+4. Download **Connector-macOS** from the Artifacts section.
+5. Unzip on a Mac and move `Connector.app` to `/Applications/`.
+
+### macOS App Architecture
+
+```
+macos/
+├── project.yml                          # xcodegen project spec
+├── Connector/
+│   ├── ConnectorApp.swift               # @main entry point, service initialisation
+│   ├── Connector.entitlements           # Sandbox disabled (subprocess + AppleEvents access)
+│   ├── Assets.xcassets/                 # App icon and accent colour
+│   │
+│   ├── Models/
+│   │   ├── Site.swift                   # Site struct (14 fields), ConnectionProtocol, AuthType
+│   │   ├── AppSettings.swift            # Settings with defaults (Codable)
+│   │   └── ConnectorError.swift         # LocalizedError enum
+│   │
+│   ├── Services/
+│   │   ├── CryptoService.swift          # AES-256-GCM encryption via CryptoKit
+│   │   ├── StorageService.swift         # Encrypted JSON site CRUD
+│   │   ├── SettingsService.swift        # Encrypted settings read/write
+│   │   └── TerminalService.swift        # Terminal detection, AppleScript launch, SSH/SCP
+│   │
+│   ├── ViewModels/
+│   │   ├── SiteStore.swift              # @Observable site/folder CRUD, export/import
+│   │   └── SettingsStore.swift          # @Observable settings wrapper
+│   │
+│   └── Views/
+│       ├── ContentView.swift            # NavigationSplitView layout
+│       ├── SidebarView.swift            # Folder tree, site list, search, context menus
+│       ├── SiteFormView.swift           # Create/edit form (protocol-adaptive fields)
+│       ├── SiteDetailView.swift         # Detail display with action buttons
+│       ├── SFTPBrowserView.swift        # Remote file browser (upload/download)
+│       ├── SettingsView.swift           # Settings form with export/import
+│       └── QuickConnectView.swift       # Quick connect sheet (user@host:port)
+```
+
+**Key differences from the web UI:**
+
+| Aspect | Web UI | macOS App |
+|---|---|---|
+| Encryption | Fernet (AES-128-CBC + HMAC) | AES-256-GCM (CryptoKit) |
+| SFTP | Paramiko SSH library (in-process) | `ssh`/`scp` subprocess via `Process` |
+| UI framework | Flask + Jinja2 + Bootstrap 5 | SwiftUI with `@Observable` |
+| Data directory | `./data/` (configurable) | `~/Library/Application Support/Connector/` |
+| State management | Flask `app.config` dict | SwiftUI `@Environment` injection |
+
+The encrypted storage formats are **not cross-compatible** between the two versions. Use the JSON export/import feature (which strips credentials) to migrate session metadata between them.
+
+---
+
 ## CLI Reference
 
 All lifecycle management goes through `connector.sh`:
@@ -155,7 +285,7 @@ connector/
 │
 ├── logs/                        # Debug log files (git-ignored)
 │
-├── src/
+├── src/                         # Python/Flask web UI
 │   ├── app.py                   # Flask application factory + context processor
 │   ├── config.py                # Centralised configuration from env vars
 │   │
@@ -185,6 +315,21 @@ connector/
 │   │
 │   └── static/css/
 │       └── style.css            # Dark theme + two-panel layout styles
+│
+├── macos/                       # Native macOS app (Swift/SwiftUI)
+│   ├── project.yml              # xcodegen project spec
+│   └── Connector/
+│       ├── ConnectorApp.swift   # @main entry point
+│       ├── Connector.entitlements
+│       ├── Assets.xcassets/
+│       ├── Models/              # Site, AppSettings, ConnectorError
+│       ├── Services/            # CryptoService, StorageService, SettingsService, TerminalService
+│       ├── ViewModels/          # SiteStore, SettingsStore
+│       └── Views/               # ContentView, SidebarView, SiteFormView, SiteDetailView,
+│                                #   SFTPBrowserView, SettingsView, QuickConnectView
+│
+├── .github/workflows/
+│   └── build-macos.yml          # CI: build macOS app + upload artifact
 │
 └── tests/
     ├── conftest.py              # Shared fixtures (app, client, crypto, storage)
@@ -598,14 +743,16 @@ All variables are optional. Defaults work for local development.
 
 ## Security Notes
 
-- **Encryption at rest** -- all session data (including passwords) is encrypted with Fernet (AES-128-CBC + HMAC-SHA256). The key file (`data/.key`) is created with `0600` permissions.
+- **Encryption at rest** -- all session data (including passwords) is encrypted at rest. The web UI uses Fernet (AES-128-CBC + HMAC-SHA256); the macOS app uses AES-256-GCM via CryptoKit. Key files are created with `0600` permissions.
 - **No plaintext credentials** -- passwords are never written to disk in plaintext. The `.enc` files are opaque ciphertext.
-- **Local-only by default** -- the server binds to `127.0.0.1`, not `0.0.0.0`. It is not exposed to the network unless you change `CONNECTOR_HOST`.
-- **Git-ignored secrets** -- `.env`, `data/.key`, `data/*.enc`, and `data/*.pid` are all in `.gitignore`.
+- **Local-only by default** -- the web server binds to `127.0.0.1`, not `0.0.0.0`. It is not exposed to the network unless you change `CONNECTOR_HOST`. The macOS app has no network listener.
+- **Git-ignored secrets** -- `.env`, `data/.key`, `data/*.enc`, `data/*.pid`, and `Connector.xcodeproj/` are all in `.gitignore`.
 - **sshpass security** -- when `sshpass` is used, the password is passed via the `SSHPASS` environment variable (not command-line arguments), which avoids exposure in process listings.
-- **No external database** -- there is no database server to secure. All state is in encrypted flat files under `data/`.
+- **No external database** -- there is no database server to secure. All state is in encrypted flat files.
+- **Export/import safety** -- JSON exports always strip credentials (passwords and key paths). Imported sessions have credentials blanked and receive fresh UUIDs.
+- **Not cross-compatible** -- the web UI and macOS app use different encryption schemes. Their encrypted files cannot be read by the other version. Use JSON export/import to transfer session metadata between them.
 
-> **Warning:** The Fernet key at `data/.key` is the master secret. If it is lost, all encrypted data becomes unrecoverable. If it is compromised, all stored credentials are exposed. Back it up securely and restrict file-system access.
+> **Warning:** The encryption key (`data/.key` for the web UI, `~/Library/Application Support/Connector/.key` for the macOS app) is the master secret. If it is lost, all encrypted data becomes unrecoverable. If it is compromised, all stored credentials are exposed. Back it up securely and restrict file-system access.
 
 ---
 
