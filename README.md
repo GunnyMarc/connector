@@ -21,6 +21,7 @@ Connector lets you organise remote sessions into folders, store credentials secu
 - [Quick Start](#quick-start)
 - [macOS Native App](#macos-native-app)
   - [Building from Source](#building-from-source)
+  - [Build Script Reference](#build-script-reference)
   - [Packaging and Installing](#packaging-and-installing)
   - [CI Build (GitHub Actions)](#ci-build-github-actions)
   - [macOS App Architecture](#macos-app-architecture)
@@ -108,26 +109,59 @@ The `macos/` directory contains a native SwiftUI application that mirrors all fe
 
 **Prerequisites:** macOS with Xcode 16+ installed.
 
-```bash
-# Install xcodegen (one-time)
-brew install xcodegen
+The `macos/build.sh` script wraps `xcodebuild` and handles build, test, run, and clean operations:
 
-# Generate the Xcode project and build
+```bash
 cd macos
-xcodegen generate
-xcodebuild -project Connector.xcodeproj \
-  -scheme Connector \
-  -configuration Release \
-  build
+
+# Debug build
+./build.sh --build
+
+# Release build
+./build.sh --release
+
+# Build and launch
+./build.sh --run
 ```
 
-Or open in Xcode and press **Cmd+R**:
+Or open in Xcode directly and press **Cmd+R**:
 
 ```bash
 cd macos
-xcodegen generate
 open Connector.xcodeproj
 ```
+
+If you need to regenerate the Xcode project from `project.yml` (after modifying the project spec):
+
+```bash
+brew install xcodegen     # one-time
+./build.sh --generate
+```
+
+### Build Script Reference
+
+All macOS build operations go through `macos/build.sh`:
+
+```
+Usage: ./build.sh [OPTION]
+
+Options:
+  --build      Build the app in Debug configuration
+  --release    Build the app in Release configuration
+  --test       Run the unit test suite
+  --run        Build (Debug) and launch the app
+  --clean      Remove Xcode derived data for this project
+  --generate   Regenerate Xcode project from project.yml (requires xcodegen)
+```
+
+| Flag | What it does |
+|---|---|
+| `--build` | Compiles the Connector app in Debug configuration via `xcodebuild`. |
+| `--release` | Compiles in Release configuration (optimised, suitable for distribution). |
+| `--test` | Builds and runs the full Swift test suite (117 tests across 34 suites). |
+| `--run` | Builds in Debug, then launches `Connector.app` via `open`. |
+| `--clean` | Removes this project's Xcode derived data (`~/Library/Developer/Xcode/DerivedData/Connector-*`). |
+| `--generate` | Runs `xcodegen generate` to regenerate `Connector.xcodeproj` from `project.yml`. Requires `xcodegen` (`brew install xcodegen`). |
 
 ### Packaging and Installing
 
@@ -137,14 +171,10 @@ After building, copy the `.app` bundle to `/Applications/`:
 cd macos
 
 # Build release
-xcodebuild -project Connector.xcodeproj \
-  -scheme Connector \
-  -configuration Release \
-  -derivedDataPath ./build \
-  build
+./build.sh --release
 
-# Install
-cp -R build/Build/Products/Release/Connector.app /Applications/
+# Copy from Xcode's derived data to /Applications
+cp -R ~/Library/Developer/Xcode/DerivedData/Connector-*/Build/Products/Release/Connector.app /Applications/
 
 # Launch
 open /Applications/Connector.app
@@ -172,6 +202,7 @@ The workflow (`.github/workflows/build-macos.yml`) triggers on:
 
 ```
 macos/
+├── build.sh                             # Build, test, run, and clean (zsh)
 ├── project.yml                          # xcodegen project spec (app + test targets)
 ├── Connector/
 │   ├── ConnectorApp.swift               # @main entry point, service initialisation
@@ -335,6 +366,7 @@ connector/
 │   └── favicon-*.png            # Web favicon PNGs
 │
 ├── macos/                       # Native macOS app (Swift/SwiftUI)
+│   ├── build.sh                 # Build, test, run, and clean (zsh)
 │   ├── project.yml              # xcodegen project spec (app + test targets)
 │   ├── Connector/
 │   │   ├── ConnectorApp.swift   # @main entry point

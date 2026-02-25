@@ -449,10 +449,85 @@ final class TerminalService: Sendable {
 
     /// Download a remote file using `scp`.
     func sftpDownload(site: Site, remotePath: String, localPath: String) throws {
-        var args = ["-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=10"]
+        var args = buildSCPArgs(site: site, recursive: false)
+        args.append(buildSCPRemote(site: site, remotePath: remotePath))
+        args.append(localPath)
+        try executeSCP(site: site, scpArgs: args)
+    }
+
+    /// Upload a local file using `scp`.
+    func sftpUpload(site: Site, localPath: String, remotePath: String) throws {
+        var args = buildSCPArgs(site: site, recursive: false)
+        args.append(localPath)
+        args.append(buildSCPRemote(site: site, remotePath: remotePath))
+        try executeSCP(site: site, scpArgs: args)
+    }
+
+    /// Download a remote directory recursively using `scp -r`.
+    ///
+    /// Copies the entire directory tree, including hidden files and
+    /// all subdirectories, to the local destination.
+    func sftpDownloadDirectory(site: Site, remotePath: String, localPath: String) throws {
+        var args = buildSCPArgs(site: site, recursive: true)
+        args.append(buildSCPRemote(site: site, remotePath: remotePath))
+        args.append(localPath)
+        try executeSCP(site: site, scpArgs: args)
+    }
+
+    /// Upload a local directory recursively using `scp -r`.
+    ///
+    /// Copies the entire directory tree, including hidden files and
+    /// all subdirectories, to the remote destination.
+    func sftpUploadDirectory(site: Site, localPath: String, remotePath: String) throws {
+        var args = buildSCPArgs(site: site, recursive: true)
+        args.append(localPath)
+        args.append(buildSCPRemote(site: site, remotePath: remotePath))
+        try executeSCP(site: site, scpArgs: args)
+    }
+
+    /// Delete a remote file via `rm` over SSH.
+    func sftpDelete(site: Site, remotePath: String) throws {
+        let result = try executeSSHCommand(
+            site: site,
+            command: "rm \(remotePath.shellQuoted)",
+        )
+        guard result.exitCode == 0 else {
+            throw ConnectorError.connectionFailed(
+                result.stderr.isEmpty ? "Delete failed" : result.stderr
+            )
+        }
+    }
+
+    /// Delete a remote directory recursively via `rm -rf` over SSH.
+    ///
+    /// Removes the directory and all of its contents. This operation
+    /// is irreversible — callers should confirm with the user first.
+    func sftpDeleteDirectory(site: Site, remotePath: String) throws {
+        let result = try executeSSHCommand(
+            site: site,
+            command: "rm -rf \(remotePath.shellQuoted)",
+        )
+        guard result.exitCode == 0 else {
+            throw ConnectorError.connectionFailed(
+                result.stderr.isEmpty ? "Directory delete failed" : result.stderr
+            )
+        }
+    }
+
+    // MARK: - SCP Subprocess Helpers
+
+    /// Build common SCP arguments for the given site.
+    ///
+    /// Includes host-key checking, timeout, auth options, port, and key path.
+    /// Pass `recursive: true` to add the `-r` flag for directory transfers.
+    private func buildSCPArgs(site: Site, recursive: Bool) -> [String] {
+        var args: [String] = []
+        if recursive {
+            args.append("-r")
+        }
+        args += ["-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=10"]
 
         let isPasswordAuth = site.authType == .password && !site.password.isEmpty
-
         if isPasswordAuth {
             args += Self.passwordAuthSCPOptions
         }
@@ -463,37 +538,51 @@ final class TerminalService: Sendable {
             args += ["-i", NSString(string: site.keyPath).expandingTildeInPath]
         }
 
-        let remote: String
-        if !site.username.isEmpty {
-            remote = "\(site.username)@\(site.hostname):\(remotePath)"
-        } else {
-            remote = "\(site.hostname):\(remotePath)"
-        }
-        args.append(remote)
-        args.append(localPath)
+        return args
+    }
 
+    /// Build the remote path specification for SCP (`user@host:path`).
+    private func buildSCPRemote(site: Site, remotePath: String) -> String {
+        if !site.username.isEmpty {
+            "\(site.username)@\(site.hostname):\(remotePath)"
+        } else {
+            "\(site.hostname):\(remotePath)"
+        }
+    }
+
+    /// Execute an SCP transfer with the given arguments.
+    ///
+    /// Handles password authentication via `sshpass` (if available) or
+    /// the SSH_ASKPASS mechanism (built into macOS OpenSSH).
+    private func executeSCP(site: Site, scpArgs: [String]) throws {
         let process = Process()
         var askpassURL: URL?
+        let isPasswordAuth = site.authType == .password && !site.password.isEmpty
 
         if isPasswordAuth {
             if platformInfo.hasSshpass {
-                // Use sshpass if available
                 var env = ProcessInfo.processInfo.environment
                 env["SSHPASS"] = site.password
                 process.environment = env
-                process.executableURL = URL(fileURLWithPath: Self.which("sshpass") ?? "/usr/local/bin/sshpass")
-                process.arguments = ["-e", "scp"] + args
+                process.executableURL = URL(
+                    fileURLWithPath: Self.which("sshpass") ?? "/usr/local/bin/sshpass"
+                )
+                process.arguments = ["-e", "scp"] + scpArgs
             } else {
                 // Use SSH_ASKPASS (built into macOS OpenSSH)
                 let scriptURL = try createAskpassScript(password: site.password)
                 askpassURL = scriptURL
-                configurePasswordEnvironment(process: process, password: site.password, askpassURL: scriptURL)
+                configurePasswordEnvironment(
+                    process: process,
+                    password: site.password,
+                    askpassURL: scriptURL,
+                )
                 process.executableURL = URL(fileURLWithPath: "/usr/bin/scp")
-                process.arguments = args
+                process.arguments = scpArgs
             }
         } else {
             process.executableURL = URL(fileURLWithPath: "/usr/bin/scp")
-            process.arguments = args
+            process.arguments = scpArgs
         }
 
         let errPipe = Pipe()
@@ -509,73 +598,10 @@ final class TerminalService: Sendable {
 
         if process.terminationStatus != 0 {
             let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
-            let errMsg = String(data: errData, encoding: .utf8) ?? "Download failed"
-            throw ConnectorError.connectionFailed(errMsg.trimmingCharacters(in: .whitespacesAndNewlines))
-        }
-    }
-
-    /// Upload a local file using `scp`.
-    func sftpUpload(site: Site, localPath: String, remotePath: String) throws {
-        var args = ["-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=10"]
-
-        let isPasswordAuth = site.authType == .password && !site.password.isEmpty
-
-        if isPasswordAuth {
-            args += Self.passwordAuthSCPOptions
-        }
-        if site.port != 22 {
-            args += ["-P", String(site.port)]
-        }
-        if site.authType == .key && !site.keyPath.isEmpty {
-            args += ["-i", NSString(string: site.keyPath).expandingTildeInPath]
-        }
-
-        args.append(localPath)
-
-        let remote: String
-        if !site.username.isEmpty {
-            remote = "\(site.username)@\(site.hostname):\(remotePath)"
-        } else {
-            remote = "\(site.hostname):\(remotePath)"
-        }
-        args.append(remote)
-
-        let process = Process()
-        var askpassURL: URL?
-
-        if isPasswordAuth {
-            if platformInfo.hasSshpass {
-                var env = ProcessInfo.processInfo.environment
-                env["SSHPASS"] = site.password
-                process.environment = env
-                process.executableURL = URL(fileURLWithPath: Self.which("sshpass") ?? "/usr/local/bin/sshpass")
-                process.arguments = ["-e", "scp"] + args
-            } else {
-                let scriptURL = try createAskpassScript(password: site.password)
-                askpassURL = scriptURL
-                configurePasswordEnvironment(process: process, password: site.password, askpassURL: scriptURL)
-                process.executableURL = URL(fileURLWithPath: "/usr/bin/scp")
-                process.arguments = args
-            }
-        } else {
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/scp")
-            process.arguments = args
-        }
-
-        let errPipe = Pipe()
-        process.standardError = errPipe
-        process.standardOutput = FileHandle.nullDevice
-        process.standardInput = FileHandle.nullDevice
-
-        defer { if let url = askpassURL { try? FileManager.default.removeItem(at: url) } }
-
-        try process.run()
-        process.waitUntilExit()
-
-        if process.terminationStatus != 0 {
-            let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
-            let errMsg = String(data: errData, encoding: .utf8) ?? "Upload failed"
-            throw ConnectorError.connectionFailed(errMsg.trimmingCharacters(in: .whitespacesAndNewlines))
+            let errMsg = String(data: errData, encoding: .utf8) ?? "Transfer failed"
+            throw ConnectorError.connectionFailed(
+                errMsg.trimmingCharacters(in: .whitespacesAndNewlines)
+            )
         }
     }
 

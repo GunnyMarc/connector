@@ -16,6 +16,9 @@ struct SFTPBrowserView: View {
     @State private var isLoading = false
     @State private var errorMessage: String?
     @State private var parentPath: String?
+    @State private var loadingMessage = "Loading..."
+    @State private var showDeleteConfirm = false
+    @State private var fileToDelete: RemoteFile?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -53,10 +56,12 @@ struct SFTPBrowserView: View {
                 .buttonStyle(.borderless)
                 .disabled(isLoading)
 
-                Button(action: uploadFile) {
+                Menu {
+                    Button("File...", action: uploadFile)
+                    Button("Directory...", action: uploadDirectory)
+                } label: {
                     Label("Upload", systemImage: "square.and.arrow.up")
                 }
-                .buttonStyle(.borderless)
             }
             .padding(.horizontal)
             .padding(.vertical, 8)
@@ -65,7 +70,7 @@ struct SFTPBrowserView: View {
 
             // File list
             if isLoading {
-                ProgressView("Loading...")
+                ProgressView(loadingMessage)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let error = errorMessage {
                 VStack(spacing: 8) {
@@ -93,6 +98,24 @@ struct SFTPBrowserView: View {
         .onAppear {
             currentPath = site.sftpRoot.isEmpty ? "" : site.sftpRoot
             refresh()
+        }
+        .alert("Confirm Delete", isPresented: $showDeleteConfirm) {
+            Button("Delete", role: .destructive) {
+                if let file = fileToDelete {
+                    performDelete(file)
+                }
+            }
+            Button("Cancel", role: .cancel) {
+                fileToDelete = nil
+            }
+        } message: {
+            if let file = fileToDelete {
+                if file.isDirectory {
+                    Text("Delete directory \"\(file.name)\" and all of its contents? This cannot be undone.")
+                } else {
+                    Text("Delete \"\(file.name)\"? This cannot be undone.")
+                }
+            }
         }
     }
 
@@ -133,8 +156,13 @@ struct SFTPBrowserView: View {
                 .contextMenu {
                     if file.isDirectory {
                         Button("Open") { navigateTo(file.path) }
+                        Button("Download") { downloadDirectory(file) }
+                        Divider()
+                        Button("Delete", role: .destructive) { confirmDelete(file) }
                     } else {
                         Button("Download") { downloadFile(file) }
+                        Divider()
+                        Button("Delete", role: .destructive) { confirmDelete(file) }
                     }
                 }
             }
@@ -144,6 +172,7 @@ struct SFTPBrowserView: View {
     // MARK: - Actions
 
     private func refresh() {
+        loadingMessage = "Loading..."
         isLoading = true
         errorMessage = nil
         let terminal = store.terminal
@@ -197,6 +226,7 @@ struct SFTPBrowserView: View {
 
         guard panel.runModal() == .OK, let url = panel.url else { return }
 
+        loadingMessage = "Downloading file..."
         isLoading = true
         let terminal = store.terminal
         let currentSite = site
@@ -216,6 +246,77 @@ struct SFTPBrowserView: View {
         }
     }
 
+    private func downloadDirectory(_ file: RemoteFile) {
+        let panel = NSOpenPanel()
+        panel.title = "Choose Destination for Directory"
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        loadingMessage = "Downloading directory..."
+        isLoading = true
+        let terminal = store.terminal
+        let currentSite = site
+
+        Task.detached {
+            do {
+                try terminal.sftpDownloadDirectory(
+                    site: currentSite,
+                    remotePath: file.path,
+                    localPath: url.path,
+                )
+                await MainActor.run {
+                    isLoading = false
+                }
+            } catch {
+                await MainActor.run {
+                    errorMessage = "Directory download failed: \(error.localizedDescription)"
+                    isLoading = false
+                }
+            }
+        }
+    }
+
+    private func confirmDelete(_ file: RemoteFile) {
+        fileToDelete = file
+        showDeleteConfirm = true
+    }
+
+    private func performDelete(_ file: RemoteFile) {
+        loadingMessage = file.isDirectory ? "Deleting directory..." : "Deleting file..."
+        isLoading = true
+        let terminal = store.terminal
+        let currentSite = site
+
+        Task.detached {
+            do {
+                if file.isDirectory {
+                    try terminal.sftpDeleteDirectory(
+                        site: currentSite,
+                        remotePath: file.path,
+                    )
+                } else {
+                    try terminal.sftpDelete(
+                        site: currentSite,
+                        remotePath: file.path,
+                    )
+                }
+                await MainActor.run {
+                    isLoading = false
+                    refresh()
+                }
+            } catch {
+                await MainActor.run {
+                    errorMessage = "Delete failed: \(error.localizedDescription)"
+                    isLoading = false
+                }
+            }
+        }
+    }
+
     private func uploadFile() {
         let panel = NSOpenPanel()
         panel.title = "Upload File"
@@ -225,15 +326,21 @@ struct SFTPBrowserView: View {
 
         guard panel.runModal() == .OK, let url = panel.url else { return }
 
-        let remotePath = "\(currentPath)/\(url.lastPathComponent)".replacingOccurrences(of: "//", with: "/")
+        let remotePath = "\(currentPath)/\(url.lastPathComponent)"
+            .replacingOccurrences(of: "//", with: "/")
 
+        loadingMessage = "Uploading file..."
         isLoading = true
         let terminal = store.terminal
         let currentSite = site
 
         Task.detached {
             do {
-                try terminal.sftpUpload(site: currentSite, localPath: url.path, remotePath: remotePath)
+                try terminal.sftpUpload(
+                    site: currentSite,
+                    localPath: url.path,
+                    remotePath: remotePath,
+                )
                 await MainActor.run {
                     isLoading = false
                     refresh()
@@ -241,6 +348,43 @@ struct SFTPBrowserView: View {
             } catch {
                 await MainActor.run {
                     errorMessage = "Upload failed: \(error.localizedDescription)"
+                    isLoading = false
+                }
+            }
+        }
+    }
+
+    private func uploadDirectory() {
+        let panel = NSOpenPanel()
+        panel.title = "Upload Directory"
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        let remotePath = "\(currentPath)/\(url.lastPathComponent)"
+            .replacingOccurrences(of: "//", with: "/")
+
+        loadingMessage = "Uploading directory..."
+        isLoading = true
+        let terminal = store.terminal
+        let currentSite = site
+
+        Task.detached {
+            do {
+                try terminal.sftpUploadDirectory(
+                    site: currentSite,
+                    localPath: url.path,
+                    remotePath: remotePath,
+                )
+                await MainActor.run {
+                    isLoading = false
+                    refresh()
+                }
+            } catch {
+                await MainActor.run {
+                    errorMessage = "Directory upload failed: \(error.localizedDescription)"
                     isLoading = false
                 }
             }
