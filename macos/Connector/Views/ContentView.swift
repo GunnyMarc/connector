@@ -61,6 +61,9 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: .quickConnectRequested)) { _ in
             showQuickConnect = true
         }
+        .onReceive(NotificationCenter.default.publisher(for: .refreshRequested)) { _ in
+            store.reload()
+        }
     }
 
     private var emptyState: some View {

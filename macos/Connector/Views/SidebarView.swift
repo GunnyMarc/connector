@@ -58,6 +58,7 @@ struct SidebarView: View {
                 // Visual feedback handled by SwiftUI highlight
             }
         }
+        .id(store.refreshToken)
         .searchable(text: Bindable(store).searchText, prompt: "Search sites...")
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
@@ -71,6 +72,10 @@ struct SidebarView: View {
                     showNewFolderAlert = true
                 }) {
                     Label("New Folder", systemImage: "folder.badge.plus")
+                }
+
+                Button(action: { store.reload() }) {
+                    Label("Refresh", systemImage: "arrow.clockwise")
                 }
 
                 Menu {

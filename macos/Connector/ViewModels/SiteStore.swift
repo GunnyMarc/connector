@@ -13,6 +13,10 @@ private let folderSep = "/"
 // MARK: - Folder Tree Node
 
 /// A node in the recursive folder tree for sidebar display.
+///
+/// `Equatable` compares **all** fields (not just `id`) so that SwiftUI's
+/// `ForEach` detects content changes — sites added/removed/edited and
+/// subfolder mutations — and re-renders the corresponding views.
 struct FolderNode: Identifiable, Hashable {
     let id: String          // Full path (used as key)
     let name: String        // Display label (last segment)
@@ -21,7 +25,11 @@ struct FolderNode: Identifiable, Hashable {
     var sites: [Site]
 
     static func == (lhs: FolderNode, rhs: FolderNode) -> Bool {
-        lhs.id == rhs.id
+        lhs.id == rhs.id &&
+        lhs.name == rhs.name &&
+        lhs.path == rhs.path &&
+        lhs.children == rhs.children &&
+        lhs.sites == rhs.sites
     }
 
     func hash(into hasher: inout Hasher) {
@@ -41,6 +49,10 @@ final class SiteStore {
     var selectedSiteID: String?
     var searchText: String = ""
     var errorMessage: String?
+
+    /// Token that changes on every `reload()`, allowing views to force a
+    /// full re-render via `.id(store.refreshToken)`.
+    private(set) var refreshToken = UUID()
 
     // MARK: - Dependencies
 
@@ -88,6 +100,10 @@ final class SiteStore {
     // MARK: - Data Loading
 
     /// Reload sites and folders from encrypted storage.
+    ///
+    /// Bumps `refreshToken` so views using `.id(store.refreshToken)` are
+    /// guaranteed to re-render even when SwiftUI's diff optimisations
+    /// would otherwise suppress the update.
     func reload() {
         do {
             sites = try storage.listSites()
@@ -96,6 +112,7 @@ final class SiteStore {
         } catch {
             errorMessage = error.localizedDescription
         }
+        refreshToken = UUID()
     }
 
     // MARK: - Site CRUD

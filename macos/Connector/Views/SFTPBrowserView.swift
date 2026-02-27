@@ -19,6 +19,7 @@ struct SFTPBrowserView: View {
     @State private var loadingMessage = "Loading..."
     @State private var showDeleteConfirm = false
     @State private var fileToDelete: RemoteFile?
+    @State private var editingPath = ""
 
     var body: some View {
         VStack(spacing: 0) {
@@ -43,12 +44,10 @@ struct SFTPBrowserView: View {
                     .buttonStyle(.borderless)
                 }
 
-                Text(currentPath.isEmpty ? "~" : currentPath)
+                TextField("~", text: $editingPath)
                     .font(.system(.body, design: .monospaced))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-
-                Spacer()
+                    .textFieldStyle(.plain)
+                    .onSubmit { navigateTo(editingPath) }
 
                 Button(action: refresh) {
                     Image(systemName: "arrow.clockwise")
@@ -97,6 +96,7 @@ struct SFTPBrowserView: View {
         .frame(minWidth: 500, idealWidth: 700, minHeight: 350, idealHeight: 500)
         .onAppear {
             currentPath = site.sftpRoot.isEmpty ? "" : site.sftpRoot
+            editingPath = currentPath
             refresh()
         }
         .alert("Confirm Delete", isPresented: $showDeleteConfirm) {
@@ -194,6 +194,7 @@ struct SFTPBrowserView: View {
 
                 await MainActor.run {
                     currentPath = resolvedPath
+                    editingPath = resolvedPath
                     files = listing
                     parentPath = parent
                     isLoading = false

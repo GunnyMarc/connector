@@ -70,6 +70,13 @@ struct ConnectorApp: App {
                     NotificationCenter.default.post(name: .quickConnectRequested, object: nil)
                 }
                 .keyboardShortcut("k")
+
+                Divider()
+
+                Button("Refresh") {
+                    NotificationCenter.default.post(name: .refreshRequested, object: nil)
+                }
+                .keyboardShortcut("r")
             }
         }
 
@@ -107,4 +114,5 @@ struct ConnectorApp: App {
 extension Notification.Name {
     static let newSiteRequested = Notification.Name("newSiteRequested")
     static let quickConnectRequested = Notification.Name("quickConnectRequested")
+    static let refreshRequested = Notification.Name("refreshRequested")
 }
