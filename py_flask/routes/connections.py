@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import os
 import tempfile
+import uuid
 
 from flask import (
     Blueprint,
+    Response,
     current_app,
     flash,
     redirect,
@@ -19,6 +22,9 @@ from flask import (
 from py_flask.services.ssh_service import SSHService
 from py_flask.services.storage import SiteStorage
 from py_flask.services.terminal_service import PlatformInfo, TerminalService
+
+# Temp storage for in-progress downloads: token -> local file path.
+_pending_downloads: dict[str, str] = {}
 
 connections_bp = Blueprint("connections", __name__)
 
@@ -228,3 +234,128 @@ def sftp_upload(site_id: str):
     return redirect(
         url_for("connections.sftp", site_id=site_id, path=remote_dir),
     )
+
+
+# ── SFTP upload with progress (SSE) ─────────────────────────────────────────
+
+
+@connections_bp.route("/sites/<site_id>/sftp/upload-progress", methods=["POST"])
+def sftp_upload_progress(site_id: str):
+    """Upload a file with real-time progress via Server-Sent Events.
+
+    Accepts the same form fields as :func:`sftp_upload` but returns an
+    SSE stream instead of a redirect.  The final ``complete`` event
+    triggers the browser-side completion dialog.
+    """
+    site = _storage().get_site(site_id)
+    if not site:
+        return Response(
+            f"data: {json.dumps({'event': 'error', 'message': 'Site not found.'})}\n\n",
+            content_type="text/event-stream",
+        )
+
+    remote_dir = request.form.get("remote_dir", ".")
+    uploaded = request.files.get("file")
+
+    if not uploaded or not uploaded.filename:
+        return Response(
+            f"data: {json.dumps({'event': 'error', 'message': 'No file selected.'})}\n\n",
+            content_type="text/event-stream",
+        )
+
+    tmp = tempfile.NamedTemporaryFile(delete=False)
+    uploaded.save(tmp.name)
+    tmp.close()
+
+    remote_path = f"{remote_dir}/{uploaded.filename}".replace("//", "/")
+
+    def generate():  # type: ignore[return]
+        conn = SSHService(site)
+        try:
+            conn.connect()
+            for event in conn.sftp_upload_with_progress(tmp.name, remote_path):
+                yield f"data: {json.dumps(event)}\n\n"
+        except GeneratorExit:
+            pass
+        except Exception as exc:
+            yield f"data: {json.dumps({'event': 'error', 'message': str(exc)})}\n\n"
+        finally:
+            conn.disconnect()
+            if os.path.exists(tmp.name):
+                os.unlink(tmp.name)
+
+    return Response(generate(), content_type="text/event-stream")
+
+
+# ── SFTP download with progress (SSE) ───────────────────────────────────────
+
+
+@connections_bp.route("/sites/<site_id>/sftp/download-progress", methods=["POST"])
+def sftp_download_progress(site_id: str):
+    """Download a remote file with real-time progress via Server-Sent Events.
+
+    On completion the final event includes a ``download_url`` that the
+    browser can follow to fetch the actual file bytes.
+    """
+    site = _storage().get_site(site_id)
+    if not site:
+        return Response(
+            f"data: {json.dumps({'event': 'error', 'message': 'Site not found.'})}\n\n",
+            content_type="text/event-stream",
+        )
+
+    remote_path = request.form.get("path", "")
+    if not remote_path:
+        return Response(
+            f"data: {json.dumps({'event': 'error', 'message': 'No file path specified.'})}\n\n",
+            content_type="text/event-stream",
+        )
+
+    filename = os.path.basename(remote_path)
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=f"_{filename}")
+    tmp.close()
+    token = uuid.uuid4().hex
+
+    def generate():  # type: ignore[return]
+        conn = SSHService(site)
+        try:
+            conn.connect()
+            for event in conn.sftp_download_with_progress(remote_path, tmp.name):
+                if event.get("event") == "complete":
+                    _pending_downloads[token] = tmp.name
+                    event["download_url"] = url_for(
+                        "connections.sftp_download_file",
+                        site_id=site_id,
+                        token=token,
+                    )
+                yield f"data: {json.dumps(event)}\n\n"
+        except GeneratorExit:
+            if os.path.exists(tmp.name):
+                os.unlink(tmp.name)
+        except Exception as exc:
+            yield f"data: {json.dumps({'event': 'error', 'message': str(exc)})}\n\n"
+            if os.path.exists(tmp.name):
+                os.unlink(tmp.name)
+        finally:
+            conn.disconnect()
+
+    return Response(generate(), content_type="text/event-stream")
+
+
+# ── Serve completed download ────────────────────────────────────────────────
+
+
+@connections_bp.route("/sites/<site_id>/sftp/download-file/<token>")
+def sftp_download_file(site_id: str, token: str):
+    """Serve a file that was previously downloaded with progress tracking."""
+    local_path = _pending_downloads.pop(token, None)
+    if not local_path or not os.path.exists(local_path):
+        flash("Download expired or not found.", "danger")
+        return redirect(url_for("connections.sftp", site_id=site_id))
+
+    filename = os.path.basename(local_path)
+    # Strip the UUID prefix added by NamedTemporaryFile.
+    if "_" in filename:
+        filename = filename.split("_", 1)[1]
+
+    return send_file(local_path, as_attachment=True, download_name=filename)

@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import os
+import queue
 import stat
+import threading
+from collections.abc import Generator
 from dataclasses import dataclass
-from typing import Optional
+from typing import Any, Optional
 
 import paramiko
 
@@ -167,6 +170,204 @@ class SSHService:
             sftp.put(local_path, remote_path)
         finally:
             sftp.close()
+
+    # ── SFTP operations with progress ──────────────────────────────────────
+
+    @staticmethod
+    def _format_size(size_bytes: int) -> str:
+        """Return a human-readable file size string."""
+        for unit in ("B", "KB", "MB", "GB", "TB"):
+            if abs(size_bytes) < 1024:
+                return f"{size_bytes:.1f} {unit}" if unit != "B" else f"{size_bytes} {unit}"
+            size_bytes /= 1024  # type: ignore[assignment]
+        return f"{size_bytes:.1f} PB"
+
+    def sftp_upload_with_progress(
+        self,
+        local_path: str,
+        remote_path: str,
+    ) -> Generator[dict[str, Any], None, None]:
+        """Upload a local file to *remote_path*, yielding progress events.
+
+        Each yielded dict has the shape::
+
+            {"event": "scan"|"progress"|"complete"|"error",
+             "transferred": int, "total": int, "filename": str,
+             "percent": float, "message": str}
+
+        The transfer runs in a background thread; progress events are
+        bridged to the generator via a :class:`queue.Queue`.
+        """
+        if not self._client:
+            raise ConnectionError("Not connected — call connect() first")
+
+        total_size = os.path.getsize(local_path)
+        filename = os.path.basename(remote_path)
+        size_label = self._format_size(total_size)
+
+        yield {
+            "event": "scan",
+            "message": f"Scanning source: {filename}",
+            "filename": filename,
+            "total": total_size,
+        }
+        yield {
+            "event": "scan_complete",
+            "message": f"Source size: {size_label}",
+            "filename": filename,
+            "total": total_size,
+        }
+
+        progress_queue: queue.Queue[tuple[Any, ...]] = queue.Queue()
+
+        def _callback(transferred: int, total: int) -> None:
+            progress_queue.put(("progress", transferred, total))
+
+        def _run() -> None:
+            try:
+                sftp = self._client.open_sftp()  # type: ignore[union-attr]
+                try:
+                    sftp.put(local_path, remote_path, callback=_callback)
+                finally:
+                    sftp.close()
+                progress_queue.put(("complete", total_size, total_size))
+            except Exception as exc:
+                progress_queue.put(("error", str(exc)))
+
+        thread = threading.Thread(target=_run, daemon=True)
+        thread.start()
+
+        while True:
+            try:
+                event = progress_queue.get(timeout=60)
+            except queue.Empty:
+                yield {"event": "heartbeat"}
+                continue
+
+            if event[0] == "progress":
+                transferred = int(event[1])
+                total = int(event[2])
+                pct = (transferred / total * 100) if total else 0
+                yield {
+                    "event": "progress",
+                    "transferred": transferred,
+                    "total": total,
+                    "filename": filename,
+                    "percent": round(pct, 1),
+                    "message": (
+                        f"Uploading {filename}: "
+                        f"{self._format_size(transferred)} / {size_label}"
+                    ),
+                }
+            elif event[0] == "complete":
+                yield {
+                    "event": "complete",
+                    "transferred": total_size,
+                    "total": total_size,
+                    "filename": filename,
+                    "percent": 100,
+                    "message": f"Uploaded {filename} ({size_label})",
+                }
+                break
+            elif event[0] == "error":
+                yield {"event": "error", "message": str(event[1])}
+                break
+
+        thread.join(timeout=5)
+
+    def sftp_download_with_progress(
+        self,
+        remote_path: str,
+        local_path: str,
+    ) -> Generator[dict[str, Any], None, None]:
+        """Download a remote file to *local_path*, yielding progress events.
+
+        Identical event format to :meth:`sftp_upload_with_progress`.
+        """
+        if not self._client:
+            raise ConnectionError("Not connected — call connect() first")
+
+        filename = os.path.basename(remote_path)
+
+        yield {
+            "event": "scan",
+            "message": f"Scanning source: {filename}",
+            "filename": filename,
+            "total": 0,
+        }
+
+        # Get remote file size.
+        sftp_stat = self._client.open_sftp()
+        try:
+            total_size = sftp_stat.stat(remote_path).st_size or 0
+        finally:
+            sftp_stat.close()
+
+        size_label = self._format_size(total_size)
+
+        yield {
+            "event": "scan_complete",
+            "message": f"Source size: {size_label}",
+            "filename": filename,
+            "total": total_size,
+        }
+
+        progress_queue: queue.Queue[tuple[Any, ...]] = queue.Queue()
+
+        def _callback(transferred: int, total: int) -> None:
+            progress_queue.put(("progress", transferred, total))
+
+        def _run() -> None:
+            try:
+                sftp = self._client.open_sftp()  # type: ignore[union-attr]
+                try:
+                    sftp.get(remote_path, local_path, callback=_callback)
+                finally:
+                    sftp.close()
+                progress_queue.put(("complete", total_size, total_size))
+            except Exception as exc:
+                progress_queue.put(("error", str(exc)))
+
+        thread = threading.Thread(target=_run, daemon=True)
+        thread.start()
+
+        while True:
+            try:
+                event = progress_queue.get(timeout=60)
+            except queue.Empty:
+                yield {"event": "heartbeat"}
+                continue
+
+            if event[0] == "progress":
+                transferred = int(event[1])
+                total = int(event[2])
+                pct = (transferred / total * 100) if total else 0
+                yield {
+                    "event": "progress",
+                    "transferred": transferred,
+                    "total": total,
+                    "filename": filename,
+                    "percent": round(pct, 1),
+                    "message": (
+                        f"Downloading {filename}: "
+                        f"{self._format_size(transferred)} / {size_label}"
+                    ),
+                }
+            elif event[0] == "complete":
+                yield {
+                    "event": "complete",
+                    "transferred": total_size,
+                    "total": total_size,
+                    "filename": filename,
+                    "percent": 100,
+                    "message": f"Downloaded {filename} ({size_label})",
+                }
+                break
+            elif event[0] == "error":
+                yield {"event": "error", "message": str(event[1])}
+                break
+
+        thread.join(timeout=5)
 
     # ── Context manager ────────────────────────────────────────────────────
 

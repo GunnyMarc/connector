@@ -514,6 +514,271 @@ final class TerminalService: Sendable {
         }
     }
 
+    // MARK: - SFTP Operations with Progress
+
+    /// Callback signature for transfer progress updates.
+    ///
+    /// - Parameters:
+    ///   - bytesTransferred: Cumulative bytes transferred so far.
+    ///   - totalBytes: Total bytes to transfer.
+    ///   - message: Verbose log message describing the current step.
+    typealias TransferProgress = @Sendable (Int64, Int64, String) -> Void
+
+    /// Return the total size in bytes of a remote path (file or directory).
+    ///
+    /// Uses `du -sb` (GNU coreutils) with a `stat` fallback for
+    /// single files on BSD/macOS remotes.
+    func sftpRemoteSize(site: Site, remotePath: String) throws -> Int64 {
+        // Try GNU du first, fall back to BSD stat for single files.
+        let cmd = """
+        du -sb \(remotePath.shellQuoted) 2>/dev/null | head -1 | cut -f1 \
+        || stat -f%z \(remotePath.shellQuoted) 2>/dev/null \
+        || echo 0
+        """
+        let result = try executeSSHCommand(site: site, command: cmd)
+        let raw = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        return Int64(raw) ?? 0
+    }
+
+    /// Recursively list all **files** under a remote directory with sizes.
+    ///
+    /// Returns flat list for progress tracking — each entry is a regular file.
+    func sftpListFilesRecursive(
+        site: Site,
+        remotePath: String
+    ) throws -> [(path: String, size: Int64)] {
+        let cmd = "find \(remotePath.shellQuoted) -type f -exec stat -c '%s %n' {} + 2>/dev/null " +
+                  "|| find \(remotePath.shellQuoted) -type f -exec stat -f '%z %N' {} +"
+        let result = try executeSSHCommand(site: site, command: cmd)
+        guard result.exitCode == 0 else { return [] }
+
+        var entries: [(path: String, size: Int64)] = []
+        for line in result.stdout.components(separatedBy: "\n") {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard !trimmed.isEmpty else { continue }
+            // Format: "size path"
+            guard let spaceIdx = trimmed.firstIndex(of: " ") else { continue }
+            let sizeStr = String(trimmed[trimmed.startIndex..<spaceIdx])
+            let path = String(trimmed[trimmed.index(after: spaceIdx)...])
+            let size = Int64(sizeStr) ?? 0
+            entries.append((path: path, size: size))
+        }
+        return entries
+    }
+
+    /// Download a single remote file using SCP, reporting byte-level progress
+    /// by polling the growing local file size.
+    func sftpDownloadWithProgress(
+        site: Site,
+        remotePath: String,
+        localPath: String,
+        totalSize: Int64,
+        onProgress: TransferProgress
+    ) throws {
+        let filename = (remotePath as NSString).lastPathComponent
+        onProgress(0, totalSize, "Downloading \(filename)...")
+
+        // Ensure local file exists so we can stat it during transfer.
+        FileManager.default.createFile(atPath: localPath, contents: nil)
+
+        // Run SCP in a background thread.
+        var scpError: Error?
+        let scpDone = DispatchSemaphore(value: 0)
+
+        DispatchQueue.global(qos: .userInitiated).async { [self] in
+            do {
+                var args = buildSCPArgs(site: site, recursive: false)
+                args.append(buildSCPRemote(site: site, remotePath: remotePath))
+                args.append(localPath)
+                try executeSCP(site: site, scpArgs: args)
+            } catch {
+                scpError = error
+            }
+            scpDone.signal()
+        }
+
+        // Poll local file size until SCP finishes.
+        while scpDone.wait(timeout: .now() + .milliseconds(300)) == .timedOut {
+            let attrs = try? FileManager.default.attributesOfItem(atPath: localPath)
+            let current = (attrs?[.size] as? Int64) ?? 0
+            onProgress(min(current, totalSize), totalSize, "Downloading \(filename)...")
+        }
+
+        if let err = scpError { throw err }
+        onProgress(totalSize, totalSize, "Downloaded \(filename)")
+    }
+
+    /// Upload a single local file using SCP, reporting progress by polling
+    /// the remote file size via SSH.
+    func sftpUploadWithProgress(
+        site: Site,
+        localPath: String,
+        remotePath: String,
+        totalSize: Int64,
+        onProgress: TransferProgress
+    ) throws {
+        let filename = (localPath as NSString).lastPathComponent
+        onProgress(0, totalSize, "Uploading \(filename)...")
+
+        // Run SCP in a background thread.
+        var scpError: Error?
+        let scpDone = DispatchSemaphore(value: 0)
+
+        DispatchQueue.global(qos: .userInitiated).async { [self] in
+            do {
+                var args = buildSCPArgs(site: site, recursive: false)
+                args.append(localPath)
+                args.append(buildSCPRemote(site: site, remotePath: remotePath))
+                try executeSCP(site: site, scpArgs: args)
+            } catch {
+                scpError = error
+            }
+            scpDone.signal()
+        }
+
+        // Poll remote file size via SSH until SCP finishes.
+        var lastPoll = Date.distantPast
+        while scpDone.wait(timeout: .now() + .milliseconds(500)) == .timedOut {
+            // Throttle remote stat calls to at most once per second.
+            guard Date().timeIntervalSince(lastPoll) >= 1.0 else { continue }
+            lastPoll = Date()
+
+            let cmd = "stat -c%s \(remotePath.shellQuoted) 2>/dev/null " +
+                      "|| stat -f%z \(remotePath.shellQuoted) 2>/dev/null " +
+                      "|| echo 0"
+            if let result = try? executeSSHCommand(site: site, command: cmd) {
+                let raw = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+                let current = Int64(raw) ?? 0
+                onProgress(min(current, totalSize), totalSize, "Uploading \(filename)...")
+            }
+        }
+
+        if let err = scpError { throw err }
+        onProgress(totalSize, totalSize, "Uploaded \(filename)")
+    }
+
+    /// Download a remote directory with per-file progress tracking.
+    ///
+    /// Walks the remote directory tree, then downloads files one at a time
+    /// so progress is tracked across the entire operation.
+    func sftpDownloadDirectoryWithProgress(
+        site: Site,
+        remotePath: String,
+        localPath: String,
+        onProgress: TransferProgress
+    ) throws {
+        let dirName = (remotePath as NSString).lastPathComponent
+        onProgress(0, 0, "Scanning remote directory: \(dirName)...")
+
+        let remoteFiles = try sftpListFilesRecursive(site: site, remotePath: remotePath)
+        let totalSize = remoteFiles.reduce(Int64(0)) { $0 + $1.size }
+        let totalLabel = ByteCountFormatter.string(fromByteCount: totalSize, countStyle: .file)
+
+        onProgress(0, totalSize, "Source size: \(totalLabel) (\(remoteFiles.count) files)")
+
+        var transferred: Int64 = 0
+
+        for entry in remoteFiles {
+            // Build relative path under the destination.
+            let relative = String(entry.path.dropFirst(remotePath.count))
+            let localFile = (localPath as NSString).appendingPathComponent(
+                (dirName as NSString).appendingPathComponent(relative)
+            )
+
+            // Ensure parent directories exist locally.
+            let parentDir = (localFile as NSString).deletingLastPathComponent
+            try FileManager.default.createDirectory(
+                atPath: parentDir, withIntermediateDirectories: true
+            )
+
+            let filename = (entry.path as NSString).lastPathComponent
+            onProgress(transferred, totalSize, "Downloading \(filename)...")
+
+            // Transfer individual file.
+            var args = buildSCPArgs(site: site, recursive: false)
+            args.append(buildSCPRemote(site: site, remotePath: entry.path))
+            args.append(localFile)
+            try executeSCP(site: site, scpArgs: args)
+
+            transferred += entry.size
+            onProgress(transferred, totalSize, "Downloaded \(filename)")
+        }
+
+        onProgress(totalSize, totalSize, "Directory download complete")
+    }
+
+    /// Upload a local directory with per-file progress tracking.
+    ///
+    /// Walks the local directory tree, then uploads files one at a time
+    /// so progress is tracked across the entire operation.
+    func sftpUploadDirectoryWithProgress(
+        site: Site,
+        localPath: String,
+        remotePath: String,
+        onProgress: TransferProgress
+    ) throws {
+        let dirName = (localPath as NSString).lastPathComponent
+        onProgress(0, 0, "Scanning local directory: \(dirName)...")
+
+        // Walk local directory.
+        let fm = FileManager.default
+        guard let enumerator = fm.enumerator(atPath: localPath) else {
+            throw ConnectorError.connectionFailed("Cannot read local directory")
+        }
+
+        var localFiles: [(path: String, relativePath: String, size: Int64)] = []
+        while let relative = enumerator.nextObject() as? String {
+            let full = (localPath as NSString).appendingPathComponent(relative)
+            var isDir: ObjCBool = false
+            guard fm.fileExists(atPath: full, isDirectory: &isDir), !isDir.boolValue else {
+                continue
+            }
+            let attrs = try fm.attributesOfItem(atPath: full)
+            let size = (attrs[.size] as? Int64) ?? 0
+            localFiles.append((path: full, relativePath: relative, size: size))
+        }
+
+        let totalSize = localFiles.reduce(Int64(0)) { $0 + $1.size }
+        let totalLabel = ByteCountFormatter.string(fromByteCount: totalSize, countStyle: .file)
+
+        onProgress(0, totalSize, "Source size: \(totalLabel) (\(localFiles.count) files)")
+
+        // Ensure remote base directory exists.
+        let mkdirResult = try executeSSHCommand(
+            site: site,
+            command: "mkdir -p \(remotePath.shellQuoted)"
+        )
+        if mkdirResult.exitCode != 0 {
+            throw ConnectorError.connectionFailed("Failed to create remote directory")
+        }
+
+        var transferred: Int64 = 0
+
+        for entry in localFiles {
+            let filename = (entry.relativePath as NSString).lastPathComponent
+            let remoteFile = "\(remotePath)/\(entry.relativePath)"
+
+            // Ensure parent directory exists on remote.
+            let remoteParent = (remoteFile as NSString).deletingLastPathComponent
+            _ = try? executeSSHCommand(
+                site: site,
+                command: "mkdir -p \(remoteParent.shellQuoted)"
+            )
+
+            onProgress(transferred, totalSize, "Uploading \(filename)...")
+
+            var args = buildSCPArgs(site: site, recursive: false)
+            args.append(entry.path)
+            args.append(buildSCPRemote(site: site, remotePath: remoteFile))
+            try executeSCP(site: site, scpArgs: args)
+
+            transferred += entry.size
+            onProgress(transferred, totalSize, "Uploaded \(filename)")
+        }
+
+        onProgress(totalSize, totalSize, "Directory upload complete")
+    }
+
     // MARK: - SCP Subprocess Helpers
 
     /// Build common SCP arguments for the given site.

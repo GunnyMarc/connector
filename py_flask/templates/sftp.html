@@ -19,12 +19,10 @@
     {% endif %}
 
     <!-- Upload -->
-    <form method="POST" enctype="multipart/form-data"
-          action="{{ url_for('connections.sftp_upload', site_id=site.id) }}"
-          class="mb-3">
+    <form id="uploadForm" enctype="multipart/form-data" class="mb-3">
         <input type="hidden" name="remote_dir" value="{{ current_path }}">
         <div class="input-group input-group-sm">
-            <input type="file" class="form-control" name="file" required>
+            <input type="file" class="form-control" name="file" id="uploadFile" required>
             <button type="submit" class="btn btn-outline-primary">
                 <i class="bi bi-upload"></i> Upload
             </button>
@@ -69,10 +67,12 @@
                     </td>
                     <td class="text-end">
                         {% if not f.is_dir %}
-                        <a href="{{ url_for('connections.sftp_download', site_id=site.id, path=f.path) }}"
-                           class="btn btn-sm btn-outline-success py-0">
+                        <button type="button"
+                                class="btn btn-sm btn-outline-success py-0 btn-download"
+                                data-path="{{ f.path }}"
+                                data-name="{{ f.name }}">
                             <i class="bi bi-download"></i>
-                        </a>
+                        </button>
                         {% endif %}
                     </td>
                 </tr>
@@ -92,4 +92,214 @@
         <i class="bi bi-arrow-left"></i> Back
     </a>
 </div>
+
+<!-- ── Transfer progress overlay ──────────────────────────────────────────── -->
+<div id="transferOverlay" style="display:none; position:fixed; inset:0; z-index:1060;
+     background:rgba(0,0,0,.55); backdrop-filter:blur(3px);
+     display:none; align-items:center; justify-content:center;">
+    <div style="background:var(--bs-body-bg, #fff); border-radius:.5rem; padding:1.5rem;
+         width:min(480px,90vw); box-shadow:0 .5rem 1rem rgba(0,0,0,.3);">
+        <h6 id="transferTitle" class="mb-3">
+            <i class="bi bi-arrow-repeat spin-icon"></i> Transferring...
+        </h6>
+
+        <!-- Verbose log -->
+        <div id="transferLog"
+             style="height:100px; overflow-y:auto; font-size:.75rem; font-family:monospace;
+                    background:var(--bs-tertiary-bg, #f8f9fa); border:1px solid var(--bs-border-color, #dee2e6);
+                    border-radius:.25rem; padding:.4rem .6rem; margin-bottom:.75rem;
+                    white-space:pre-wrap; word-break:break-all;">
+        </div>
+
+        <!-- Progress bar -->
+        <div class="progress mb-2" style="height:1.2rem;">
+            <div id="transferBar"
+                 class="progress-bar progress-bar-striped progress-bar-animated"
+                 role="progressbar" style="width:0%;" aria-valuenow="0"
+                 aria-valuemin="0" aria-valuemax="100">
+                0%
+            </div>
+        </div>
+        <small id="transferStats" class="text-muted">Preparing...</small>
+    </div>
+</div>
+
+<style>
+@keyframes spin { to { transform: rotate(360deg); } }
+.spin-icon { display:inline-block; animation: spin 1s linear infinite; }
+</style>
+
+<!-- ── Completion modal ───────────────────────────────────────────────────── -->
+<div class="modal fade" id="transferCompleteModal" tabindex="-1"
+     aria-labelledby="transferCompleteLabel" aria-hidden="true">
+    <div class="modal-dialog modal-sm modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-body text-center py-4">
+                <i class="bi bi-check-circle-fill text-success" style="font-size:2.5rem;"></i>
+                <p class="mt-3 mb-0 fw-semibold" id="transferCompleteLabel">
+                    File transfer complete
+                </p>
+            </div>
+            <div class="modal-footer justify-content-center border-0 pt-0">
+                <button type="button" class="btn btn-primary btn-sm px-4"
+                        data-bs-dismiss="modal" id="transferCompleteOK">OK</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+(function () {
+    var UPLOAD_URL   = {{ url_for('connections.sftp_upload_progress', site_id=site.id) | tojson }};
+    var DOWNLOAD_URL = {{ url_for('connections.sftp_download_progress', site_id=site.id) | tojson }};
+    var SFTP_URL     = {{ url_for('connections.sftp', site_id=site.id, path=current_path) | tojson }};
+
+    var overlay  = document.getElementById("transferOverlay");
+    var bar      = document.getElementById("transferBar");
+    var logEl    = document.getElementById("transferLog");
+    var statsEl  = document.getElementById("transferStats");
+    var titleEl  = document.getElementById("transferTitle");
+
+    /* ── Helpers ─────────────────────────────────────────────────────────── */
+
+    function showOverlay(title) {
+        titleEl.innerHTML = '<i class="bi bi-arrow-repeat spin-icon"></i> ' + title;
+        bar.style.width = "0%";
+        bar.textContent = "0%";
+        bar.setAttribute("aria-valuenow", "0");
+        logEl.textContent = "";
+        statsEl.textContent = "Preparing...";
+        overlay.style.display = "flex";
+    }
+
+    function hideOverlay() {
+        overlay.style.display = "none";
+    }
+
+    function appendLog(msg) {
+        logEl.textContent += msg + "\n";
+        logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    function updateProgress(pct, statsText) {
+        var p = Math.min(Math.round(pct), 100);
+        bar.style.width = p + "%";
+        bar.textContent = p + "%";
+        bar.setAttribute("aria-valuenow", String(p));
+        if (statsText) statsEl.textContent = statsText;
+    }
+
+    function showComplete() {
+        hideOverlay();
+        var modal = new bootstrap.Modal(document.getElementById("transferCompleteModal"));
+        modal.show();
+    }
+
+    /* ── Read SSE stream from fetch response ─────────────────────────────── */
+
+    function readSSE(response, onComplete) {
+        var reader = response.body.getReader();
+        var decoder = new TextDecoder();
+        var buffer = "";
+
+        function pump() {
+            reader.read().then(function (result) {
+                if (result.done) return;
+                buffer += decoder.decode(result.value, { stream: true });
+                var lines = buffer.split("\n");
+                buffer = lines.pop();
+
+                for (var i = 0; i < lines.length; i++) {
+                    var line = lines[i];
+                    if (line.indexOf("data: ") !== 0) continue;
+                    try {
+                        var evt = JSON.parse(line.substring(6));
+                    } catch (e) { continue; }
+
+                    if (evt.event === "scan" || evt.event === "scan_complete") {
+                        appendLog(evt.message);
+                    } else if (evt.event === "progress") {
+                        updateProgress(evt.percent, evt.message);
+                        /* Throttle log to avoid flooding */
+                        var rounded = Math.floor(evt.percent);
+                        if (rounded % 10 === 0) appendLog(evt.message);
+                    } else if (evt.event === "complete") {
+                        updateProgress(100, evt.message);
+                        appendLog(evt.message);
+                        if (onComplete) onComplete(evt);
+                        return;
+                    } else if (evt.event === "error") {
+                        appendLog("ERROR: " + evt.message);
+                        statsEl.textContent = "Transfer failed.";
+                        bar.classList.remove("progress-bar-animated");
+                        bar.classList.add("bg-danger");
+                        setTimeout(function () { hideOverlay(); window.location.reload(); }, 2500);
+                        return;
+                    }
+                }
+                pump();
+            });
+        }
+        pump();
+    }
+
+    /* ── Upload ──────────────────────────────────────────────────────────── */
+
+    document.getElementById("uploadForm").addEventListener("submit", function (e) {
+        e.preventDefault();
+        var fileInput = document.getElementById("uploadFile");
+        if (!fileInput.files.length) return;
+
+        var formData = new FormData(this);
+        showOverlay("Uploading...");
+
+        fetch(UPLOAD_URL, { method: "POST", body: formData })
+            .then(function (res) {
+                readSSE(res, function () {
+                    showComplete();
+                    document.getElementById("transferCompleteOK").addEventListener(
+                        "click", function () { window.location.href = SFTP_URL; }, { once: true }
+                    );
+                });
+            })
+            .catch(function () {
+                hideOverlay();
+                alert("Network error during upload.");
+            });
+    });
+
+    /* ── Download ────────────────────────────────────────────────────────── */
+
+    document.querySelectorAll(".btn-download").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+            var path = this.getAttribute("data-path");
+            var name = this.getAttribute("data-name");
+
+            showOverlay("Downloading " + name + "...");
+
+            var formData = new FormData();
+            formData.append("path", path);
+
+            fetch(DOWNLOAD_URL, { method: "POST", body: formData })
+                .then(function (res) {
+                    readSSE(res, function (evt) {
+                        showComplete();
+                        /* Trigger actual file download once modal is dismissed. */
+                        if (evt.download_url) {
+                            document.getElementById("transferCompleteOK").addEventListener(
+                                "click", function () {
+                                    window.location.href = evt.download_url;
+                                }, { once: true }
+                            );
+                        }
+                    });
+                })
+                .catch(function () {
+                    hideOverlay();
+                    alert("Network error during download.");
+                });
+        });
+    });
+})();
+</script>
 {% endblock %}

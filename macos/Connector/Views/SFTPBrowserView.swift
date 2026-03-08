@@ -2,6 +2,8 @@
 ///
 /// Mirrors the Python app's sftp.html — lists remote files with download/upload
 /// support. Uses TerminalService's SSH subprocess approach for SFTP operations.
+/// Provides verbose transfer output, a progress bar with percentage, and a
+/// "File transfer complete" dialog on completion.
 
 import SwiftUI
 
@@ -21,76 +23,91 @@ struct SFTPBrowserView: View {
     @State private var fileToDelete: RemoteFile?
     @State private var editingPath = ""
 
+    // Transfer progress state
+    @State private var isTransferring = false
+    @State private var transferProgress: Double = 0.0
+    @State private var transferLog: [String] = []
+    @State private var transferTitle = ""
+    @State private var showTransferComplete = false
+
     var body: some View {
-        VStack(spacing: 0) {
-            // Header
-            HStack {
-                Text("SFTP: \(site.name)")
-                    .font(.headline)
-                Spacer()
-                Button("Close") { dismiss() }
-                    .keyboardShortcut(.cancelAction)
-            }
-            .padding()
+        ZStack {
+            VStack(spacing: 0) {
+                // Header
+                HStack {
+                    Text("SFTP: \(site.name)")
+                        .font(.headline)
+                    Spacer()
+                    Button("Close") { dismiss() }
+                        .keyboardShortcut(.cancelAction)
+                }
+                .padding()
 
-            Divider()
+                Divider()
 
-            // Path bar
-            HStack {
-                if parentPath != nil {
-                    Button(action: navigateUp) {
-                        Image(systemName: "chevron.left")
+                // Path bar
+                HStack {
+                    if parentPath != nil {
+                        Button(action: navigateUp) {
+                            Image(systemName: "chevron.left")
+                        }
+                        .buttonStyle(.borderless)
+                    }
+
+                    TextField("~", text: $editingPath)
+                        .font(.system(.body, design: .monospaced))
+                        .textFieldStyle(.plain)
+                        .onSubmit { navigateTo(editingPath) }
+
+                    Button(action: refresh) {
+                        Image(systemName: "arrow.clockwise")
                     }
                     .buttonStyle(.borderless)
+                    .disabled(isLoading || isTransferring)
+
+                    Menu {
+                        Button("File...", action: uploadFile)
+                        Button("Directory...", action: uploadDirectory)
+                    } label: {
+                        Label("Upload", systemImage: "square.and.arrow.up")
+                    }
+                    .disabled(isTransferring)
                 }
+                .padding(.horizontal)
+                .padding(.vertical, 8)
 
-                TextField("~", text: $editingPath)
-                    .font(.system(.body, design: .monospaced))
-                    .textFieldStyle(.plain)
-                    .onSubmit { navigateTo(editingPath) }
+                Divider()
 
-                Button(action: refresh) {
-                    Image(systemName: "arrow.clockwise")
-                }
-                .buttonStyle(.borderless)
-                .disabled(isLoading)
-
-                Menu {
-                    Button("File...", action: uploadFile)
-                    Button("Directory...", action: uploadDirectory)
-                } label: {
-                    Label("Upload", systemImage: "square.and.arrow.up")
+                // File list
+                if isLoading && !isTransferring {
+                    ProgressView(loadingMessage)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if let error = errorMessage {
+                    VStack(spacing: 8) {
+                        Image(systemName: "exclamationmark.triangle")
+                            .font(.title)
+                            .foregroundStyle(.orange)
+                        Text("Connection Error")
+                            .font(.headline)
+                        Text(error)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                        Button("Retry") { refresh() }
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .padding()
+                } else if files.isEmpty {
+                    Text("Empty directory")
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    fileList
                 }
             }
-            .padding(.horizontal)
-            .padding(.vertical, 8)
 
-            Divider()
-
-            // File list
-            if isLoading {
-                ProgressView(loadingMessage)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if let error = errorMessage {
-                VStack(spacing: 8) {
-                    Image(systemName: "exclamationmark.triangle")
-                        .font(.title)
-                        .foregroundStyle(.orange)
-                    Text("Connection Error")
-                        .font(.headline)
-                    Text(error)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                    Button("Retry") { refresh() }
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .padding()
-            } else if files.isEmpty {
-                Text("Empty directory")
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                fileList
+            // Transfer progress overlay
+            if isTransferring {
+                transferOverlay
             }
         }
         .frame(minWidth: 500, idealWidth: 700, minHeight: 350, idealHeight: 500)
@@ -116,6 +133,68 @@ struct SFTPBrowserView: View {
                     Text("Delete \"\(file.name)\"? This cannot be undone.")
                 }
             }
+        }
+        .alert("File transfer complete", isPresented: $showTransferComplete) {
+            Button("OK") {
+                refresh()
+            }
+        }
+    }
+
+    // MARK: - Transfer Progress Overlay
+
+    private var transferOverlay: some View {
+        ZStack {
+            Color.black.opacity(0.4)
+                .ignoresSafeArea()
+
+            VStack(spacing: 12) {
+                HStack {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text(transferTitle)
+                        .font(.headline)
+                    Spacer()
+                }
+
+                // Verbose log
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 2) {
+                            ForEach(Array(transferLog.enumerated()), id: \.offset) { idx, line in
+                                Text(line)
+                                    .font(.system(.caption, design: .monospaced))
+                                    .foregroundStyle(.secondary)
+                                    .id(idx)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(height: 80)
+                    .padding(6)
+                    .background(.quaternary)
+                    .clipShape(RoundedRectangle(cornerRadius: 4))
+                    .onChange(of: transferLog.count) { _, _ in
+                        if let last = transferLog.indices.last {
+                            proxy.scrollTo(last, anchor: .bottom)
+                        }
+                    }
+                }
+
+                // Progress bar
+                ProgressView(value: transferProgress, total: 1.0)
+                    .progressViewStyle(.linear)
+
+                Text("\(Int(transferProgress * 100))% complete")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+            }
+            .padding(20)
+            .frame(width: 420)
+            .background(.regularMaterial)
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .shadow(radius: 10)
         }
     }
 
@@ -167,6 +246,42 @@ struct SFTPBrowserView: View {
                 }
             }
         }
+    }
+
+    // MARK: - Transfer Helpers
+
+    /// Begin a tracked transfer, updating progress state on the main actor.
+    private func beginTransfer(title: String) {
+        isTransferring = true
+        transferProgress = 0.0
+        transferLog = []
+        transferTitle = title
+    }
+
+    /// Progress callback that dispatches updates to the main actor.
+    ///
+    /// Returns a `@Sendable` closure suitable for use in `Task.detached`.
+    private func makeProgressHandler() -> TerminalService.TransferProgress {
+        return { transferred, total, message in
+            Task { @MainActor in
+                if total > 0 {
+                    transferProgress = Double(transferred) / Double(total)
+                }
+                transferLog.append(message)
+            }
+        }
+    }
+
+    /// Finish a transfer: hide the overlay and show the completion alert.
+    private func finishTransfer() {
+        isTransferring = false
+        showTransferComplete = true
+    }
+
+    /// Finish a transfer with an error message.
+    private func failTransfer(_ message: String) {
+        isTransferring = false
+        errorMessage = message
     }
 
     // MARK: - Actions
@@ -227,21 +342,33 @@ struct SFTPBrowserView: View {
 
         guard panel.runModal() == .OK, let url = panel.url else { return }
 
-        loadingMessage = "Downloading file..."
-        isLoading = true
+        beginTransfer(title: "Downloading \(file.name)...")
         let terminal = store.terminal
         let currentSite = site
+        let progress = makeProgressHandler()
 
         Task.detached {
             do {
-                try terminal.sftpDownload(site: currentSite, remotePath: file.path, localPath: url.path)
+                let totalSize = try terminal.sftpRemoteSize(
+                    site: currentSite, remotePath: file.path
+                )
                 await MainActor.run {
-                    isLoading = false
+                    let label = ByteCountFormatter.string(
+                        fromByteCount: totalSize, countStyle: .file
+                    )
+                    transferLog.append("Source size: \(label)")
                 }
+                try terminal.sftpDownloadWithProgress(
+                    site: currentSite,
+                    remotePath: file.path,
+                    localPath: url.path,
+                    totalSize: totalSize,
+                    onProgress: progress
+                )
+                await MainActor.run { finishTransfer() }
             } catch {
                 await MainActor.run {
-                    errorMessage = "Download failed: \(error.localizedDescription)"
-                    isLoading = false
+                    failTransfer("Download failed: \(error.localizedDescription)")
                 }
             }
         }
@@ -257,25 +384,23 @@ struct SFTPBrowserView: View {
 
         guard panel.runModal() == .OK, let url = panel.url else { return }
 
-        loadingMessage = "Downloading directory..."
-        isLoading = true
+        beginTransfer(title: "Downloading \(file.name)/...")
         let terminal = store.terminal
         let currentSite = site
+        let progress = makeProgressHandler()
 
         Task.detached {
             do {
-                try terminal.sftpDownloadDirectory(
+                try terminal.sftpDownloadDirectoryWithProgress(
                     site: currentSite,
                     remotePath: file.path,
                     localPath: url.path,
+                    onProgress: progress
                 )
-                await MainActor.run {
-                    isLoading = false
-                }
+                await MainActor.run { finishTransfer() }
             } catch {
                 await MainActor.run {
-                    errorMessage = "Directory download failed: \(error.localizedDescription)"
-                    isLoading = false
+                    failTransfer("Directory download failed: \(error.localizedDescription)")
                 }
             }
         }
@@ -330,26 +455,32 @@ struct SFTPBrowserView: View {
         let remotePath = "\(currentPath)/\(url.lastPathComponent)"
             .replacingOccurrences(of: "//", with: "/")
 
-        loadingMessage = "Uploading file..."
-        isLoading = true
+        beginTransfer(title: "Uploading \(url.lastPathComponent)...")
         let terminal = store.terminal
         let currentSite = site
+        let progress = makeProgressHandler()
 
         Task.detached {
             do {
-                try terminal.sftpUpload(
+                let attrs = try FileManager.default.attributesOfItem(atPath: url.path)
+                let totalSize = (attrs[.size] as? Int64) ?? 0
+                await MainActor.run {
+                    let label = ByteCountFormatter.string(
+                        fromByteCount: totalSize, countStyle: .file
+                    )
+                    transferLog.append("Source size: \(label)")
+                }
+                try terminal.sftpUploadWithProgress(
                     site: currentSite,
                     localPath: url.path,
                     remotePath: remotePath,
+                    totalSize: totalSize,
+                    onProgress: progress
                 )
-                await MainActor.run {
-                    isLoading = false
-                    refresh()
-                }
+                await MainActor.run { finishTransfer() }
             } catch {
                 await MainActor.run {
-                    errorMessage = "Upload failed: \(error.localizedDescription)"
-                    isLoading = false
+                    failTransfer("Upload failed: \(error.localizedDescription)")
                 }
             }
         }
@@ -367,26 +498,23 @@ struct SFTPBrowserView: View {
         let remotePath = "\(currentPath)/\(url.lastPathComponent)"
             .replacingOccurrences(of: "//", with: "/")
 
-        loadingMessage = "Uploading directory..."
-        isLoading = true
+        beginTransfer(title: "Uploading \(url.lastPathComponent)/...")
         let terminal = store.terminal
         let currentSite = site
+        let progress = makeProgressHandler()
 
         Task.detached {
             do {
-                try terminal.sftpUploadDirectory(
+                try terminal.sftpUploadDirectoryWithProgress(
                     site: currentSite,
                     localPath: url.path,
                     remotePath: remotePath,
+                    onProgress: progress
                 )
-                await MainActor.run {
-                    isLoading = false
-                    refresh()
-                }
+                await MainActor.run { finishTransfer() }
             } catch {
                 await MainActor.run {
-                    errorMessage = "Directory upload failed: \(error.localizedDescription)"
-                    isLoading = false
+                    failTransfer("Directory upload failed: \(error.localizedDescription)")
                 }
             }
         }
