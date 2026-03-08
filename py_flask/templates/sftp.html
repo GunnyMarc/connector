@@ -22,7 +22,8 @@
     <form id="uploadForm" enctype="multipart/form-data" class="mb-3">
         <input type="hidden" name="remote_dir" value="{{ current_path }}">
         <div class="input-group input-group-sm">
-            <input type="file" class="form-control" name="file" id="uploadFile" required>
+            <input type="file" class="form-control" name="file" id="uploadFile"
+                   multiple required>
             <button type="submit" class="btn btn-outline-primary">
                 <i class="bi bi-upload"></i> Upload
             </button>
@@ -195,9 +196,18 @@
         modal.show();
     }
 
-    /* ── Read SSE stream from fetch response ─────────────────────────────── */
+    function formatBytes(b) {
+        if (b < 1024) return b + " B";
+        if (b < 1048576) return (b / 1024).toFixed(1) + " KB";
+        if (b < 1073741824) return (b / 1048576).toFixed(1) + " MB";
+        return (b / 1073741824).toFixed(1) + " GB";
+    }
 
-    function readSSE(response, onComplete) {
+    /* ── Read SSE stream from fetch response ─────────────────────────────── */
+    /* byteOffset / byteTotal are optional — when provided the progress bar  */
+    /* reflects overall multi-file progress instead of per-file progress.    */
+
+    function readSSE(response, onComplete, byteOffset, byteTotal) {
         var reader = response.body.getReader();
         var decoder = new TextDecoder();
         var buffer = "";
@@ -219,12 +229,18 @@
                     if (evt.event === "scan" || evt.event === "scan_complete") {
                         appendLog(evt.message);
                     } else if (evt.event === "progress") {
-                        updateProgress(evt.percent, evt.message);
+                        var pct = evt.percent;
+                        if (byteTotal && byteTotal > 0) {
+                            /* Adjust to overall multi-file progress. */
+                            var overall = byteOffset + (evt.transferred || 0);
+                            pct = overall / byteTotal * 100;
+                        }
+                        updateProgress(pct, evt.message);
                         /* Throttle log to avoid flooding */
                         var rounded = Math.floor(evt.percent);
                         if (rounded % 10 === 0) appendLog(evt.message);
                     } else if (evt.event === "complete") {
-                        updateProgress(100, evt.message);
+                        if (!byteTotal) updateProgress(100, evt.message);
                         appendLog(evt.message);
                         if (onComplete) onComplete(evt);
                         return;
@@ -243,29 +259,64 @@
         pump();
     }
 
-    /* ── Upload ──────────────────────────────────────────────────────────── */
+    /* ── Upload (supports multiple files) ────────────────────────────────── */
 
     document.getElementById("uploadForm").addEventListener("submit", function (e) {
         e.preventDefault();
         var fileInput = document.getElementById("uploadFile");
-        if (!fileInput.files.length) return;
+        var files = fileInput.files;
+        if (!files.length) return;
 
-        var formData = new FormData(this);
-        showOverlay("Uploading...");
+        var remoteDir = document.querySelector('input[name="remote_dir"]').value;
+        var totalFiles = files.length;
+        var totalBytes = 0;
+        for (var i = 0; i < totalFiles; i++) totalBytes += files[i].size;
 
-        fetch(UPLOAD_URL, { method: "POST", body: formData })
-            .then(function (res) {
-                readSSE(res, function () {
-                    showComplete();
-                    document.getElementById("transferCompleteOK").addEventListener(
-                        "click", function () { window.location.href = SFTP_URL; }, { once: true }
-                    );
+        var label = totalFiles === 1
+            ? "Uploading " + files[0].name + "..."
+            : "Uploading " + totalFiles + " files...";
+        showOverlay(label);
+        appendLog("Selected " + totalFiles + " file(s), total " + formatBytes(totalBytes));
+
+        var completedBytes = 0;
+        var fileIndex = 0;
+
+        function uploadNext() {
+            if (fileIndex >= totalFiles) {
+                showComplete();
+                document.getElementById("transferCompleteOK").addEventListener(
+                    "click", function () { window.location.href = SFTP_URL; }, { once: true }
+                );
+                return;
+            }
+
+            var file = files[fileIndex];
+            var fd = new FormData();
+            fd.append("remote_dir", remoteDir);
+            fd.append("file", file);
+
+            appendLog("(" + (fileIndex + 1) + "/" + totalFiles + ") " + file.name);
+
+            fetch(UPLOAD_URL, { method: "POST", body: fd })
+                .then(function (res) {
+                    readSSE(res, function () {
+                        completedBytes += file.size;
+                        fileIndex++;
+                        /* Update overall progress across all files */
+                        if (totalBytes > 0) {
+                            updateProgress(completedBytes / totalBytes * 100,
+                                fileIndex + " of " + totalFiles + " files uploaded");
+                        }
+                        uploadNext();
+                    }, completedBytes, totalBytes);
+                })
+                .catch(function () {
+                    hideOverlay();
+                    alert("Network error during upload.");
                 });
-            })
-            .catch(function () {
-                hideOverlay();
-                alert("Network error during upload.");
-            });
+        }
+
+        uploadNext();
     });
 
     /* ── Download ────────────────────────────────────────────────────────── */

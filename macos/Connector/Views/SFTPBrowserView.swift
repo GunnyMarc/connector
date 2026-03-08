@@ -445,38 +445,85 @@ struct SFTPBrowserView: View {
 
     private func uploadFile() {
         let panel = NSOpenPanel()
-        panel.title = "Upload File"
+        panel.title = "Upload Files"
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
-        panel.allowsMultipleSelection = false
+        panel.allowsMultipleSelection = true
 
-        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard panel.runModal() == .OK, !panel.urls.isEmpty else { return }
 
-        let remotePath = "\(currentPath)/\(url.lastPathComponent)"
-            .replacingOccurrences(of: "//", with: "/")
+        let urls = panel.urls
+        let fileCount = urls.count
+        let title = fileCount == 1
+            ? "Uploading \(urls[0].lastPathComponent)..."
+            : "Uploading \(fileCount) files..."
 
-        beginTransfer(title: "Uploading \(url.lastPathComponent)...")
+        beginTransfer(title: title)
         let terminal = store.terminal
         let currentSite = site
-        let progress = makeProgressHandler()
+        let basePath = currentPath
 
         Task.detached {
             do {
-                let attrs = try FileManager.default.attributesOfItem(atPath: url.path)
-                let totalSize = (attrs[.size] as? Int64) ?? 0
+                // Calculate total size across all selected files.
+                let fm = FileManager.default
+                var fileSizes: [(url: URL, remotePath: String, size: Int64)] = []
+                var totalSize: Int64 = 0
+
+                for url in urls {
+                    let attrs = try fm.attributesOfItem(atPath: url.path)
+                    let size = (attrs[.size] as? Int64) ?? 0
+                    let remote = "\(basePath)/\(url.lastPathComponent)"
+                        .replacingOccurrences(of: "//", with: "/")
+                    fileSizes.append((url: url, remotePath: remote, size: size))
+                    totalSize += size
+                }
+
                 await MainActor.run {
                     let label = ByteCountFormatter.string(
                         fromByteCount: totalSize, countStyle: .file
                     )
-                    transferLog.append("Source size: \(label)")
+                    transferLog.append(
+                        "Selected \(fileCount) file(s), total \(label)"
+                    )
                 }
-                try terminal.sftpUploadWithProgress(
-                    site: currentSite,
-                    localPath: url.path,
-                    remotePath: remotePath,
-                    totalSize: totalSize,
-                    onProgress: progress
-                )
+
+                // Upload each file, tracking cumulative progress.
+                var completedBytes: Int64 = 0
+
+                for (index, entry) in fileSizes.enumerated() {
+                    let filename = entry.url.lastPathComponent
+                    await MainActor.run {
+                        transferLog.append(
+                            "(\(index + 1)/\(fileCount)) \(filename)"
+                        )
+                    }
+
+                    let offset = completedBytes
+                    let overallTotal = totalSize
+
+                    try terminal.sftpUploadWithProgress(
+                        site: currentSite,
+                        localPath: entry.url.path,
+                        remotePath: entry.remotePath,
+                        totalSize: entry.size,
+                        onProgress: { transferred, _, message in
+                            Task { @MainActor in
+                                let overall = offset + transferred
+                                if overallTotal > 0 {
+                                    transferProgress = Double(overall) / Double(overallTotal)
+                                }
+                                transferLog.append(message)
+                            }
+                        }
+                    )
+
+                    completedBytes += entry.size
+                    await MainActor.run {
+                        transferProgress = Double(completedBytes) / Double(totalSize)
+                    }
+                }
+
                 await MainActor.run { finishTransfer() }
             } catch {
                 await MainActor.run {
