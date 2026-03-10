@@ -123,6 +123,83 @@ final class TerminalService: Sendable {
         try launchInTerminal(cmd)
     }
 
+    // MARK: - SSH Tunnel
+
+    /// Start a backgrounded SSH tunnel with local port forwarding.
+    ///
+    /// Runs `ssh -fNL <sourcePort>:localhost:<destPort> [options] user@host`
+    /// as a subprocess. The `-f` flag backgrounds ssh after authentication,
+    /// `-N` prevents remote command execution, and `-L` sets up the local
+    /// port forward.
+    func launchTunnel(site: Site) throws {
+        guard site.hasTunnel else {
+            throw ConnectorError.connectionFailed(
+                "Tunnel is not fully configured (need username, source port, and destination port)."
+            )
+        }
+        let args = buildTunnelArgs(site: site)
+        try executeTunnel(args: args)
+    }
+
+    /// Build the argument array for an SSH tunnel command.
+    ///
+    /// Always uses `-fNL` for backgrounded local port forwarding.
+    func buildTunnelArgs(site: Site) -> [String] {
+        var args = [
+            "ssh",
+            "-f", "-N", "-L",
+            "\(site.tunnelSourcePort):localhost:\(site.tunnelDestPort)",
+            "-o", "StrictHostKeyChecking=no",
+        ]
+
+        if !site.tunnelKeyPath.isEmpty {
+            let expanded = NSString(string: site.tunnelKeyPath).expandingTildeInPath
+            args += ["-i", expanded]
+        }
+
+        if site.port != 22 {
+            args += ["-p", String(site.port)]
+        }
+
+        args.append("\(site.tunnelUsername)@\(site.hostname)")
+        return args
+    }
+
+    /// Execute an SSH tunnel as a subprocess.
+    ///
+    /// The process runs `ssh -fNL ...` which forks itself into the
+    /// background after authentication succeeds. A non-zero exit code
+    /// means the tunnel failed to establish.
+    private func executeTunnel(args: [String]) throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
+        // Drop the leading "ssh" from args — it's the executable, not an argument.
+        process.arguments = Array(args.dropFirst())
+
+        let errPipe = Pipe()
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = errPipe
+        process.standardInput = FileHandle.nullDevice
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+        } catch {
+            throw ConnectorError.connectionFailed(
+                "Failed to start SSH tunnel: \(error.localizedDescription)"
+            )
+        }
+
+        if process.terminationStatus != 0 {
+            let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
+            let errMsg = String(data: errData, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? "Unknown error"
+            throw ConnectorError.connectionFailed(
+                "SSH tunnel failed (exit \(process.terminationStatus)): \(errMsg)"
+            )
+        }
+    }
+
     // MARK: - Protocol Command Builders
 
     /// Return the shell command string for the given site's protocol.

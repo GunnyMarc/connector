@@ -40,6 +40,12 @@ struct SiteDetailView: View {
                         }
                         .buttonStyle(.borderedProminent)
 
+                        if site.hasTunnel {
+                            Button(action: { store.launchTunnel(site: site) }) {
+                                Label("Tunnel", systemImage: "lock.shield")
+                            }
+                        }
+
                         if site.isSSH {
                             Button(action: { openWindow(id: "sftp", value: site.id) }) {
                                 Label("SFTP", systemImage: "folder")
@@ -128,6 +134,14 @@ struct SiteDetailView: View {
             if site.connectionProtocol == .serial {
                 detailRow("Serial Port", site.serialPort.isEmpty ? "/dev/ttyUSB0" : site.serialPort)
                 detailRow("Baud Rate", String(site.serialBaud))
+            }
+
+            if site.hasTunnel {
+                detailRow("Tunnel", "\(site.tunnelSourcePort) -> localhost:\(site.tunnelDestPort)")
+                detailRow("Tunnel User", site.tunnelUsername)
+                if !site.tunnelKeyPath.isEmpty {
+                    detailRow("Tunnel Key", site.tunnelKeyPath)
+                }
             }
 
             if !site.folder.isEmpty {

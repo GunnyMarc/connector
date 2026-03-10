@@ -340,6 +340,15 @@ final class SiteStore {
         }
     }
 
+    /// Start an SSH tunnel for a site.
+    func launchTunnel(site: Site) {
+        do {
+            try terminal.launchTunnel(site: site)
+        } catch {
+            errorMessage = "Failed to start tunnel: \(error.localizedDescription)"
+        }
+    }
+
     /// Quick-connect by parsing user@host:port.
     func quickConnect(raw: String) {
         var host = raw.trimmingCharacters(in: .whitespaces)
@@ -373,7 +382,7 @@ final class SiteStore {
 
     /// Export all sessions and folders to JSON (credentials stripped).
     func exportData() -> Data? {
-        let credentialFields: Set<String> = ["password", "key_path"]
+        let credentialFields: Set<String> = ["password", "key_path", "tunnel_key_path"]
 
         var exportedSites: [[String: Any]] = []
         for site in sites {
@@ -434,6 +443,7 @@ final class SiteStore {
             // Ensure credentials are blank
             siteDict["password"] = ""
             siteDict["key_path"] = ""
+            siteDict["tunnel_key_path"] = ""
             // Drop old ID so a fresh UUID is generated
             siteDict.removeValue(forKey: "id")
             siteDict["id"] = UUID().uuidString

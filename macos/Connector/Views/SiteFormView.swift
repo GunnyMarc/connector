@@ -96,6 +96,46 @@ struct SiteFormView: View {
                     }
                 }
 
+                // SSH Tunnel (available for network protocols)
+                if draft.connectionProtocol.isNetwork {
+                    Section("SSH Tunnel") {
+                        Toggle("Enable SSH Tunnel", isOn: $draft.tunnelEnabled)
+                            .help("Establish an SSH tunnel with local port forwarding (-fNL)")
+
+                        if draft.tunnelEnabled {
+                            TextField("Username", text: $draft.tunnelUsername)
+                                .help("SSH username for the tunnel connection")
+
+                            HStack {
+                                TextField(
+                                    "SSH Key Path (optional)",
+                                    text: $draft.tunnelKeyPath
+                                )
+                                Button("Browse...") {
+                                    browseForTunnelKey()
+                                }
+                            }
+                            .help("Path to SSH private key for tunnel auth (leave empty for default)")
+
+                            TextField(
+                                "Source Port",
+                                value: $draft.tunnelSourcePort,
+                                format: .number
+                            )
+                            .frame(width: 100)
+                            .help("Local port to listen on (e.g. 8080)")
+
+                            TextField(
+                                "Destination Port",
+                                value: $draft.tunnelDestPort,
+                                format: .number
+                            )
+                            .frame(width: 100)
+                            .help("Remote port to forward to (e.g. 80)")
+                        }
+                    }
+                }
+
                 // Organization
                 Section("Organization") {
                     Picker("Folder", selection: $draft.folder) {
@@ -169,6 +209,23 @@ struct SiteFormView: View {
 
         if panel.runModal() == .OK, let url = panel.url {
             draft.keyPath = url.path
+        }
+    }
+
+    private func browseForTunnelKey() {
+        let panel = NSOpenPanel()
+        panel.title = "Select SSH Key for Tunnel"
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.allowsMultipleSelection = false
+
+        let sshDir = NSString(string: "~/.ssh").expandingTildeInPath
+        if FileManager.default.fileExists(atPath: sshDir) {
+            panel.directoryURL = URL(fileURLWithPath: sshDir)
+        }
+
+        if panel.runModal() == .OK, let url = panel.url {
+            draft.tunnelKeyPath = url.path
         }
     }
 }

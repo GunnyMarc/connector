@@ -27,6 +27,11 @@ struct TestSiteCreation {
         #expect(site.serialPort == "")
         #expect(site.serialBaud == 9600)
         #expect(site.sftpRoot == "")
+        #expect(site.tunnelEnabled == false)
+        #expect(site.tunnelUsername == "")
+        #expect(site.tunnelKeyPath == "")
+        #expect(site.tunnelSourcePort == 0)
+        #expect(site.tunnelDestPort == 0)
         #expect(!site.id.isEmpty)
     }
 
@@ -46,7 +51,12 @@ struct TestSiteCreation {
             connectionProtocol: .ssh2,
             serialPort: "",
             serialBaud: 9600,
-            sftpRoot: "/var/www"
+            sftpRoot: "/var/www",
+            tunnelEnabled: true,
+            tunnelUsername: "tunnel_user",
+            tunnelKeyPath: "~/.ssh/tunnel_key",
+            tunnelSourcePort: 8080,
+            tunnelDestPort: 80
         )
         #expect(site.id == "test-uuid-123")
         #expect(site.name == "Production Server")
@@ -59,6 +69,11 @@ struct TestSiteCreation {
         #expect(site.folder == "AWS")
         #expect(site.connectionProtocol == .ssh2)
         #expect(site.sftpRoot == "/var/www")
+        #expect(site.tunnelEnabled == true)
+        #expect(site.tunnelUsername == "tunnel_user")
+        #expect(site.tunnelKeyPath == "~/.ssh/tunnel_key")
+        #expect(site.tunnelSourcePort == 8080)
+        #expect(site.tunnelDestPort == 80)
     }
 
     @Test("Site generates unique UUIDs")
@@ -127,7 +142,12 @@ struct TestSiteCodable {
             connectionProtocol: .ssh1,
             serialPort: "/dev/tty0",
             serialBaud: 115200,
-            sftpRoot: "/home"
+            sftpRoot: "/home",
+            tunnelEnabled: true,
+            tunnelUsername: "tunneler",
+            tunnelKeyPath: "~/.ssh/tunnel_key",
+            tunnelSourcePort: 3306,
+            tunnelDestPort: 3306
         )
 
         let encoder = JSONEncoder()
@@ -149,6 +169,11 @@ struct TestSiteCodable {
         #expect(decoded.serialPort == original.serialPort)
         #expect(decoded.serialBaud == original.serialBaud)
         #expect(decoded.sftpRoot == original.sftpRoot)
+        #expect(decoded.tunnelEnabled == original.tunnelEnabled)
+        #expect(decoded.tunnelUsername == original.tunnelUsername)
+        #expect(decoded.tunnelKeyPath == original.tunnelKeyPath)
+        #expect(decoded.tunnelSourcePort == original.tunnelSourcePort)
+        #expect(decoded.tunnelDestPort == original.tunnelDestPort)
     }
 
     @Test("Site JSON uses snake_case coding keys")
@@ -158,7 +183,12 @@ struct TestSiteCodable {
             name: "Test",
             hostname: "host",
             authType: .password,
-            connectionProtocol: .ssh2
+            connectionProtocol: .ssh2,
+            tunnelEnabled: true,
+            tunnelUsername: "tuser",
+            tunnelKeyPath: "~/.ssh/tkey",
+            tunnelSourcePort: 5432,
+            tunnelDestPort: 5432
         )
         let data = try JSONEncoder().encode(site)
         let json = try JSONSerialization.jsonObject(with: data) as! [String: Any]
@@ -171,10 +201,21 @@ struct TestSiteCodable {
         #expect(json["sftp_root"] != nil)
         // "protocol" key (not "connectionProtocol")
         #expect(json["protocol"] as? String == "ssh2")
+        // Tunnel keys use snake_case
+        #expect(json["tunnel_enabled"] as? Bool == true)
+        #expect(json["tunnel_username"] as? String == "tuser")
+        #expect(json["tunnel_key_path"] as? String == "~/.ssh/tkey")
+        #expect(json["tunnel_source_port"] as? Int == 5432)
+        #expect(json["tunnel_dest_port"] as? Int == 5432)
         // Camel-case keys should NOT exist
         #expect(json["authType"] == nil)
         #expect(json["keyPath"] == nil)
         #expect(json["connectionProtocol"] == nil)
+        #expect(json["tunnelEnabled"] == nil)
+        #expect(json["tunnelUsername"] == nil)
+        #expect(json["tunnelKeyPath"] == nil)
+        #expect(json["tunnelSourcePort"] == nil)
+        #expect(json["tunnelDestPort"] == nil)
     }
 
     @Test("Site decodes from Python-compatible JSON")
@@ -206,6 +247,40 @@ struct TestSiteCodable {
         #expect(site.keyPath == "~/.ssh/id_ed25519")
         #expect(site.connectionProtocol == .ssh2)
         #expect(site.folder == "Imported")
+    }
+
+    @Test("Site decodes legacy JSON without tunnel fields")
+    func decodeLegacyWithoutTunnel() throws {
+        let json = """
+        {
+            "id": "legacy-id",
+            "name": "Old Server",
+            "hostname": "10.0.0.1",
+            "port": 22,
+            "username": "user",
+            "auth_type": "password",
+            "password": "secret",
+            "key_path": "",
+            "notes": "",
+            "folder": "",
+            "protocol": "ssh2",
+            "serial_port": "",
+            "serial_baud": 9600,
+            "sftp_root": ""
+        }
+        """
+        let data = json.data(using: .utf8)!
+        let site = try JSONDecoder().decode(Site.self, from: data)
+
+        #expect(site.id == "legacy-id")
+        #expect(site.name == "Old Server")
+        // Tunnel fields default gracefully
+        #expect(site.tunnelEnabled == false)
+        #expect(site.tunnelUsername == "")
+        #expect(site.tunnelKeyPath == "")
+        #expect(site.tunnelSourcePort == 0)
+        #expect(site.tunnelDestPort == 0)
+        #expect(site.hasTunnel == false)
     }
 
     @Test("Site Hashable conformance")
@@ -263,6 +338,60 @@ struct TestSiteProperties {
         #expect(Site(password: "abc").maskedPassword == "***")
         #expect(Site(password: "12345678").maskedPassword == "********")
         #expect(Site(password: "a very long password").maskedPassword == "********")
+    }
+
+    @Test("hasTunnel requires enabled, username, and both ports")
+    func hasTunnel() {
+        // Fully configured tunnel
+        let full = Site(
+            hostname: "host.local",
+            tunnelEnabled: true,
+            tunnelUsername: "tuser",
+            tunnelSourcePort: 8080,
+            tunnelDestPort: 80
+        )
+        #expect(full.hasTunnel == true)
+
+        // Disabled tunnel
+        let disabled = Site(
+            hostname: "host.local",
+            tunnelEnabled: false,
+            tunnelUsername: "tuser",
+            tunnelSourcePort: 8080,
+            tunnelDestPort: 80
+        )
+        #expect(disabled.hasTunnel == false)
+
+        // Missing username
+        let noUser = Site(
+            hostname: "host.local",
+            tunnelEnabled: true,
+            tunnelSourcePort: 8080,
+            tunnelDestPort: 80
+        )
+        #expect(noUser.hasTunnel == false)
+
+        // Missing source port
+        let noSrc = Site(
+            hostname: "host.local",
+            tunnelEnabled: true,
+            tunnelUsername: "tuser",
+            tunnelDestPort: 80
+        )
+        #expect(noSrc.hasTunnel == false)
+
+        // Missing dest port
+        let noDst = Site(
+            hostname: "host.local",
+            tunnelEnabled: true,
+            tunnelUsername: "tuser",
+            tunnelSourcePort: 8080
+        )
+        #expect(noDst.hasTunnel == false)
+
+        // Defaults (no tunnel configured)
+        let defaults = Site()
+        #expect(defaults.hasTunnel == false)
     }
 }
 

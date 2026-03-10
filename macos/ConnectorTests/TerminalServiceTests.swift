@@ -197,6 +197,122 @@ struct TestConnectorError {
     }
 }
 
+// MARK: - SSH Tunnel Command Building
+
+struct TestTunnelCommandBuilding {
+    @Test("Tunnel args include -fNL with port forwarding")
+    func tunnelArgsBasic() {
+        let svc = TerminalService()
+        let site = Site(
+            hostname: "remote.host",
+            port: 22,
+            tunnelEnabled: true,
+            tunnelUsername: "tunneler",
+            tunnelSourcePort: 8080,
+            tunnelDestPort: 80
+        )
+
+        let args = svc.buildTunnelArgs(site: site)
+
+        #expect(args[0] == "ssh")
+        #expect(args.contains("-f"))
+        #expect(args.contains("-N"))
+        #expect(args.contains("-L"))
+
+        // Port forwarding spec
+        let fwdIdx = args.firstIndex(of: "-L")!
+        #expect(args[args.index(after: fwdIdx)] == "8080:localhost:80")
+
+        // Target
+        #expect(args.last == "tunneler@remote.host")
+    }
+
+    @Test("Tunnel args include SSH key when provided")
+    func tunnelArgsWithKey() {
+        let svc = TerminalService()
+        let site = Site(
+            hostname: "remote.host",
+            tunnelEnabled: true,
+            tunnelUsername: "tunneler",
+            tunnelKeyPath: "~/.ssh/tunnel_key",
+            tunnelSourcePort: 3306,
+            tunnelDestPort: 3306
+        )
+
+        let args = svc.buildTunnelArgs(site: site)
+
+        #expect(args.contains("-i"))
+        let keyIdx = args.firstIndex(of: "-i")!
+        let expanded = NSString(string: "~/.ssh/tunnel_key").expandingTildeInPath
+        #expect(args[args.index(after: keyIdx)] == expanded)
+    }
+
+    @Test("Tunnel args omit SSH key when empty")
+    func tunnelArgsWithoutKey() {
+        let svc = TerminalService()
+        let site = Site(
+            hostname: "remote.host",
+            tunnelEnabled: true,
+            tunnelUsername: "tunneler",
+            tunnelSourcePort: 5432,
+            tunnelDestPort: 5432
+        )
+
+        let args = svc.buildTunnelArgs(site: site)
+        #expect(!args.contains("-i"))
+    }
+
+    @Test("Tunnel args include custom port when not 22")
+    func tunnelArgsCustomPort() {
+        let svc = TerminalService()
+        let site = Site(
+            hostname: "remote.host",
+            port: 2222,
+            tunnelEnabled: true,
+            tunnelUsername: "tunneler",
+            tunnelSourcePort: 8080,
+            tunnelDestPort: 80
+        )
+
+        let args = svc.buildTunnelArgs(site: site)
+        #expect(args.contains("-p"))
+        let portIdx = args.firstIndex(of: "-p")!
+        #expect(args[args.index(after: portIdx)] == "2222")
+    }
+
+    @Test("Tunnel args omit -p for default port 22")
+    func tunnelArgsDefaultPort() {
+        let svc = TerminalService()
+        let site = Site(
+            hostname: "remote.host",
+            port: 22,
+            tunnelEnabled: true,
+            tunnelUsername: "tunneler",
+            tunnelSourcePort: 8080,
+            tunnelDestPort: 80
+        )
+
+        let args = svc.buildTunnelArgs(site: site)
+        #expect(!args.contains("-p"))
+    }
+
+    @Test("Tunnel args include StrictHostKeyChecking=no")
+    func tunnelArgsHostKeyCheck() {
+        let svc = TerminalService()
+        let site = Site(
+            hostname: "remote.host",
+            tunnelEnabled: true,
+            tunnelUsername: "tunneler",
+            tunnelSourcePort: 8080,
+            tunnelDestPort: 80
+        )
+
+        let args = svc.buildTunnelArgs(site: site)
+        let idx = args.firstIndex(of: "-o")!
+        #expect(args[args.index(after: idx)] == "StrictHostKeyChecking=no")
+    }
+}
+
 // MARK: - TerminalService Initialisation
 
 struct TestTerminalServiceInit {

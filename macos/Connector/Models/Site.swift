@@ -77,6 +77,11 @@ struct Site: Identifiable, Codable, Hashable, Sendable {
     var serialPort: String
     var serialBaud: Int
     var sftpRoot: String
+    var tunnelEnabled: Bool
+    var tunnelUsername: String
+    var tunnelKeyPath: String
+    var tunnelSourcePort: Int
+    var tunnelDestPort: Int
 
     /// Create a new site with sensible defaults.
     init(
@@ -93,7 +98,12 @@ struct Site: Identifiable, Codable, Hashable, Sendable {
         connectionProtocol: ConnectionProtocol = .ssh2,
         serialPort: String = "",
         serialBaud: Int = 9600,
-        sftpRoot: String = ""
+        sftpRoot: String = "",
+        tunnelEnabled: Bool = false,
+        tunnelUsername: String = "",
+        tunnelKeyPath: String = "",
+        tunnelSourcePort: Int = 0,
+        tunnelDestPort: Int = 0
     ) {
         self.id = id
         self.name = name
@@ -109,6 +119,11 @@ struct Site: Identifiable, Codable, Hashable, Sendable {
         self.serialPort = serialPort
         self.serialBaud = serialBaud
         self.sftpRoot = sftpRoot
+        self.tunnelEnabled = tunnelEnabled
+        self.tunnelUsername = tunnelUsername
+        self.tunnelKeyPath = tunnelKeyPath
+        self.tunnelSourcePort = tunnelSourcePort
+        self.tunnelDestPort = tunnelDestPort
     }
 
     // MARK: - Codable
@@ -128,6 +143,35 @@ struct Site: Identifiable, Codable, Hashable, Sendable {
         case serialPort   = "serial_port"
         case serialBaud   = "serial_baud"
         case sftpRoot     = "sftp_root"
+        case tunnelEnabled    = "tunnel_enabled"
+        case tunnelUsername   = "tunnel_username"
+        case tunnelKeyPath    = "tunnel_key_path"
+        case tunnelSourcePort = "tunnel_source_port"
+        case tunnelDestPort   = "tunnel_dest_port"
+    }
+
+    /// Decode with graceful fallback for tunnel fields missing from older data.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id                 = try c.decode(String.self, forKey: .id)
+        name               = try c.decode(String.self, forKey: .name)
+        hostname           = try c.decode(String.self, forKey: .hostname)
+        port               = try c.decode(Int.self, forKey: .port)
+        username           = try c.decode(String.self, forKey: .username)
+        authType           = try c.decode(AuthType.self, forKey: .authType)
+        password           = try c.decode(String.self, forKey: .password)
+        keyPath            = try c.decode(String.self, forKey: .keyPath)
+        notes              = try c.decode(String.self, forKey: .notes)
+        folder             = try c.decode(String.self, forKey: .folder)
+        connectionProtocol = try c.decode(ConnectionProtocol.self, forKey: .connectionProtocol)
+        serialPort         = try c.decode(String.self, forKey: .serialPort)
+        serialBaud         = try c.decode(Int.self, forKey: .serialBaud)
+        sftpRoot           = try c.decode(String.self, forKey: .sftpRoot)
+        tunnelEnabled      = try c.decodeIfPresent(Bool.self, forKey: .tunnelEnabled) ?? false
+        tunnelUsername     = try c.decodeIfPresent(String.self, forKey: .tunnelUsername) ?? ""
+        tunnelKeyPath      = try c.decodeIfPresent(String.self, forKey: .tunnelKeyPath) ?? ""
+        tunnelSourcePort   = try c.decodeIfPresent(Int.self, forKey: .tunnelSourcePort) ?? 0
+        tunnelDestPort     = try c.decodeIfPresent(Int.self, forKey: .tunnelDestPort) ?? 0
     }
 
     // MARK: - Computed Properties
@@ -140,6 +184,14 @@ struct Site: Identifiable, Codable, Hashable, Sendable {
 
     /// Whether this site requires hostname/port fields.
     var isNetwork: Bool { connectionProtocol.isNetwork }
+
+    /// Whether this site has a fully configured SSH tunnel.
+    var hasTunnel: Bool {
+        tunnelEnabled &&
+        !tunnelUsername.isEmpty &&
+        tunnelSourcePort > 0 &&
+        tunnelDestPort > 0
+    }
 
     /// Password replaced with asterisks for safe display.
     var maskedPassword: String {
