@@ -21,6 +21,10 @@ class SettingsService:
         "default_auth_type": "password",
         "default_key_path": "~/.ssh/id_rsa",
         "folders": [],
+        # Terminal preference — empty strings mean "use the platform default"
+        # detected at startup.
+        "terminal_name": "",
+        "terminal_path": "",
     }
 
     def __init__(self, file_path: Path, crypto: CryptoService) -> None:

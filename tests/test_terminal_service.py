@@ -7,8 +7,10 @@ from unittest.mock import patch
 
 from py_flask.services.terminal_service import (
     PlatformInfo,
+    TerminalApp,
     TerminalService,
     detect_platform,
+    discover_terminals,
 )
 
 
@@ -70,6 +72,7 @@ class TestSSHCommandBuilding:
             system_label="macOS" if system == "Darwin" else system,
             terminal="Terminal",
             terminal_cmd="Terminal",
+            terminal_launcher="macos_terminal",
             has_sshpass=has_sshpass,
         )
         return TerminalService(info)
@@ -171,6 +174,7 @@ class TestProtocolCommandBuilding:
             system_label="macOS" if system == "Darwin" else system,
             terminal="Terminal",
             terminal_cmd="Terminal",
+            terminal_launcher="macos_terminal",
             has_sshpass=has_sshpass,
         )
         return TerminalService(info)
@@ -293,3 +297,92 @@ class TestProtocolCommandBuilding:
         cmd = svc._build_command_for_protocol(site, "ssh1")
         assert "-i" in cmd
         assert "Protocol=1" in cmd
+
+
+class TestTerminalDiscovery:
+    """Test discover_terminals() and the user-selectable terminal API."""
+
+    @patch("py_flask.services.terminal_service._is_installed", return_value=True)
+    def test_discover_macos_returns_catalog(self, mock_installed) -> None:
+        """macOS discovery returns the expected app catalog."""
+        terms = discover_terminals(system="Darwin")
+        names = [t.name for t in terms]
+        assert "iTerm" in names
+        assert "Ghostty" in names
+        assert "Royal TSX" in names
+        assert "Terminal" in names
+        assert all(isinstance(t, TerminalApp) for t in terms)
+
+    @patch("py_flask.services.terminal_service._is_installed", return_value=False)
+    def test_discover_marks_uninstalled(self, mock_installed) -> None:
+        """When nothing is installed, every entry has installed=False."""
+        terms = discover_terminals(system="Linux")
+        assert terms  # catalog is non-empty
+        assert all(t.installed is False for t in terms)
+
+    def test_discover_dedups_terminal_app(self) -> None:
+        """The two Terminal.app paths collapse to a single entry on macOS."""
+        terms = discover_terminals(system="Darwin")
+        assert sum(1 for t in terms if t.name == "Terminal") == 1
+
+    def test_set_terminal_updates_platform_info(self) -> None:
+        """set_terminal switches the active launcher and label."""
+        info = PlatformInfo(
+            system="Darwin",
+            system_label="macOS",
+            terminal="Terminal",
+            terminal_cmd="Terminal",
+            terminal_launcher="macos_terminal",
+            has_sshpass=False,
+        )
+        svc = TerminalService(info)
+        svc.set_terminal("Ghostty", "/Applications/Ghostty.app")
+        assert svc.platform_info.terminal == "Ghostty"
+        assert svc.platform_info.terminal_cmd == "/Applications/Ghostty.app"
+        assert svc.platform_info.terminal_launcher == "macos_ghostty"
+
+    def test_set_terminal_falls_back_to_catalog_path(self) -> None:
+        """set_terminal with empty path uses the catalog default for that name."""
+        info = PlatformInfo(
+            system="Darwin",
+            system_label="macOS",
+            terminal="Terminal",
+            terminal_cmd="Terminal",
+            terminal_launcher="macos_terminal",
+            has_sshpass=False,
+        )
+        svc = TerminalService(info)
+        svc.set_terminal("iTerm", "")
+        assert svc.platform_info.terminal == "iTerm"
+        assert svc.platform_info.terminal_cmd == "/Applications/iTerm.app"
+        assert svc.platform_info.terminal_launcher == "macos_iterm"
+
+    def test_set_terminal_unknown_name_uses_generic_launcher(self) -> None:
+        """A custom terminal name falls back to the platform's generic launcher."""
+        info = PlatformInfo(
+            system="Darwin",
+            system_label="macOS",
+            terminal="Terminal",
+            terminal_cmd="Terminal",
+            terminal_launcher="macos_terminal",
+            has_sshpass=False,
+        )
+        svc = TerminalService(info)
+        svc.set_terminal("MyCustomTerm", "/Applications/MyCustomTerm.app")
+        assert svc.platform_info.terminal == "MyCustomTerm"
+        assert svc.platform_info.terminal_launcher == "macos_open"
+
+    def test_set_terminal_empty_name_is_noop(self) -> None:
+        """Empty name leaves the existing terminal selection alone."""
+        info = PlatformInfo(
+            system="Darwin",
+            system_label="macOS",
+            terminal="Terminal",
+            terminal_cmd="Terminal",
+            terminal_launcher="macos_terminal",
+            has_sshpass=False,
+        )
+        svc = TerminalService(info)
+        svc.set_terminal("", "")
+        assert svc.platform_info.terminal == "Terminal"
+        assert svc.platform_info.terminal_launcher == "macos_terminal"

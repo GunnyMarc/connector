@@ -31,6 +31,11 @@ struct SettingsView: View {
 
                     Divider()
 
+                    // ── Terminal Application ──────────────────────────
+                    terminalSection
+
+                    Divider()
+
                     // ── Connection Defaults ───────────────────────────
                     connectionDefaultsSection
 
@@ -75,7 +80,7 @@ struct SettingsView: View {
             }
             .padding()
         }
-        .frame(width: 520, height: 620)
+        .frame(width: 520, height: 740)
         .confirmationDialog(
             "Reset to Defaults?",
             isPresented: $showResetConfirmation,
@@ -126,7 +131,7 @@ struct SettingsView: View {
                 GridRow {
                     Text("Terminal")
                         .foregroundStyle(.secondary)
-                    Text(store.terminal.platformInfo.terminal)
+                    Text(store.terminal.selectedTerminal.name)
                 }
                 GridRow {
                     Text("sshpass")
@@ -148,6 +153,96 @@ struct SettingsView: View {
             Text("Sessions: \(store.sites.count)  |  Folders: \(store.folders.count)")
                 .font(.caption)
                 .foregroundStyle(.tertiary)
+        }
+    }
+
+    // MARK: - Terminal Application Section
+
+    /// Sentinel value for the "auto-detect" picker option (empty terminalName).
+    private static let autoDetectTag = "__auto__"
+
+    @ViewBuilder
+    private var terminalSection: some View {
+        @Bindable var settingsStore = settingsStore
+
+        let catalog = store.terminal.platformInfo.availableTerminals
+        // Picker requires unique tags; dedup names just in case.
+        let pickerOptions: [TerminalApp] = {
+            var seen = Set<String>()
+            return catalog.filter { seen.insert($0.name).inserted }
+        }()
+
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Terminal Application")
+                .font(.headline)
+                .foregroundStyle(.primary)
+
+            Text("Choose which terminal opens new sessions. Items marked “(not installed)” require a custom path.")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+
+            Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 10) {
+                // Terminal dropdown
+                GridRow {
+                    Text("Terminal")
+                        .foregroundStyle(.secondary)
+                        .gridColumnAlignment(.trailing)
+                        .frame(width: 110, alignment: .trailing)
+
+                    Picker(
+                        "",
+                        selection: Binding(
+                            get: {
+                                settingsStore.settings.terminalName.isEmpty
+                                    ? Self.autoDetectTag
+                                    : settingsStore.settings.terminalName
+                            },
+                            set: { newValue in
+                                if newValue == Self.autoDetectTag {
+                                    settingsStore.settings.terminalName = ""
+                                    settingsStore.settings.terminalPath = ""
+                                } else {
+                                    settingsStore.settings.terminalName = newValue
+                                    // Reset the manual override when the user
+                                    // picks a different catalog entry.
+                                    if let match = catalog.first(where: {
+                                        $0.name.caseInsensitiveCompare(newValue) == .orderedSame
+                                    }) {
+                                        settingsStore.settings.terminalPath = match.path
+                                    }
+                                }
+                            }
+                        )
+                    ) {
+                        Text("Auto-detect (\(store.terminal.platformInfo.terminal))")
+                            .tag(Self.autoDetectTag)
+                        ForEach(pickerOptions) { term in
+                            Text(term.installed ? term.name : "\(term.name) (not installed)")
+                                .tag(term.name)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(maxWidth: 250)
+                }
+
+                // Application path override
+                GridRow {
+                    Text("App Path")
+                        .foregroundStyle(.secondary)
+                        .frame(width: 110, alignment: .trailing)
+                    HStack(spacing: 8) {
+                        TextField(
+                            "(default for selected terminal)",
+                            text: $settingsStore.settings.terminalPath
+                        )
+                        .textFieldStyle(.roundedBorder)
+                        .frame(maxWidth: 250)
+                        Button("Browse...") {
+                            browseForTerminalApp()
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -293,6 +388,12 @@ struct SettingsView: View {
 
     private func saveSettings() {
         if settingsStore.save() {
+            // Apply the new terminal selection live so the next launch uses
+            // it without restarting the app.
+            store.terminal.setTerminal(
+                name: settingsStore.settings.terminalName,
+                path: settingsStore.settings.terminalPath
+            )
             // Reload the SiteStore so folder changes propagate.
             store.reload()
             statusMessage = "Settings saved."
@@ -300,6 +401,30 @@ struct SettingsView: View {
         } else {
             statusMessage = settingsStore.errorMessage ?? "Save failed."
             statusIsError = true
+        }
+    }
+
+    private func browseForTerminalApp() {
+        let panel = NSOpenPanel()
+        panel.title = "Select Terminal Application"
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = [.application]
+        panel.directoryURL = URL(fileURLWithPath: "/Applications")
+
+        if panel.runModal() == .OK, let url = panel.url {
+            settingsStore.settings.terminalPath = url.path
+            // If the chosen bundle's name matches a catalog entry, sync the
+            // dropdown selection too.
+            let bundleName = url.deletingPathExtension().lastPathComponent
+            if let match = store.terminal.platformInfo.availableTerminals.first(where: {
+                $0.name.caseInsensitiveCompare(bundleName) == .orderedSame
+            }) {
+                settingsStore.settings.terminalName = match.name
+            } else if settingsStore.settings.terminalName.isEmpty {
+                settingsStore.settings.terminalName = bundleName
+            }
         }
     }
 

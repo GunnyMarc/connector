@@ -99,6 +99,13 @@ def create_app() -> Flask:
     settings_svc = SettingsService(Config.SETTINGS_FILE, crypto)
     app.config["SETTINGS"] = settings_svc
 
+    # Apply the user-selected terminal preference (if any) from settings.
+    saved = settings_svc.get_all()
+    if saved.get("terminal_name"):
+        terminal.set_terminal(
+            saved["terminal_name"], saved.get("terminal_path", ""),
+        )
+
     # ── Context processor — inject sidebar data into every template ────────
     @app.context_processor
     def inject_sidebar() -> dict:

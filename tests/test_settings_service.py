@@ -19,6 +19,8 @@ class TestSettingsDefaults:
         assert settings["default_username"] == ""
         assert settings["default_auth_type"] == "password"
         assert settings["default_key_path"] == "~/.ssh/id_rsa"
+        assert settings["terminal_name"] == ""
+        assert settings["terminal_path"] == ""
 
     def test_get_single_default(
         self, settings_svc: SettingsService,

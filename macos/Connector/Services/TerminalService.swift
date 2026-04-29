@@ -31,36 +31,98 @@ struct RemoteFile: Identifiable, Sendable {
     let modified: String
 }
 
+/// One entry in the platform's terminal-application catalog.
+///
+/// `installed` reflects whether the bundle exists at `path` on the host;
+/// `launcher` is the strategy id used by `launchInTerminal` to open
+/// commands in that terminal.
+struct TerminalApp: Identifiable, Hashable, Sendable {
+    var id: String { "\(name)|\(launcher)" }
+    let name: String         // Human-readable label shown in the picker
+    let path: String         // .app bundle path
+    let launcher: String     // Launcher strategy id (see TerminalLauncher)
+    let installed: Bool      // True if `path` exists at detection time
+}
+
 /// Snapshot of the detected terminal environment.
 struct PlatformInfo: Sendable {
-    let system: String         // Always "Darwin"
-    let systemLabel: String    // Always "macOS"
-    let terminal: String       // "iTerm" or "Terminal"
-    let hasSshpass: Bool       // Whether sshpass is on PATH
-    let hasExpect: Bool        // Whether expect is on PATH
+    let system: String                       // Always "Darwin"
+    let systemLabel: String                  // Always "macOS"
+    let terminal: String                     // Default terminal name at startup
+    let hasSshpass: Bool                     // Whether sshpass is on PATH
+    let hasExpect: Bool                      // Whether expect is on PATH
+    let availableTerminals: [TerminalApp]    // Catalog with `installed` flags
+
+    /// Convenience initialiser that fills in an empty catalog (used by tests).
+    init(
+        system: String,
+        systemLabel: String,
+        terminal: String,
+        hasSshpass: Bool,
+        hasExpect: Bool,
+        availableTerminals: [TerminalApp] = []
+    ) {
+        self.system = system
+        self.systemLabel = systemLabel
+        self.terminal = terminal
+        self.hasSshpass = hasSshpass
+        self.hasExpect = hasExpect
+        self.availableTerminals = availableTerminals
+    }
 }
+
+/// Launcher strategy ids understood by `launchInTerminal`.
+enum TerminalLauncher {
+    static let appleTerminal = "macos_terminal"
+    static let iTerm         = "macos_iterm"
+    static let ghostty       = "macos_ghostty"
+    static let openGeneric   = "macos_open"
+}
+
+/// Catalog of terminal applications Connector knows how to launch.
+///
+/// Order matters — the first installed entry becomes the auto-detect default.
+/// To add a terminal, append an entry here and (if it needs a custom launch
+/// strategy) register one in `launchInTerminal`.
+private let macTerminalCatalog: [(name: String, path: String, launcher: String)] = [
+    ("iTerm",      "/Applications/iTerm.app",                              TerminalLauncher.iTerm),
+    ("Ghostty",    "/Applications/Ghostty.app",                            TerminalLauncher.ghostty),
+    ("Royal TSX",  "/Applications/Royal TSX.app",                          TerminalLauncher.openGeneric),
+    ("Alacritty",  "/Applications/Alacritty.app",                          TerminalLauncher.openGeneric),
+    ("Kitty",      "/Applications/kitty.app",                              TerminalLauncher.openGeneric),
+    ("WezTerm",    "/Applications/WezTerm.app",                            TerminalLauncher.openGeneric),
+    ("Hyper",      "/Applications/Hyper.app",                              TerminalLauncher.openGeneric),
+    ("Terminal",   "/System/Applications/Utilities/Terminal.app",          TerminalLauncher.appleTerminal),
+    ("Terminal",   "/Applications/Utilities/Terminal.app",                 TerminalLauncher.appleTerminal),
+]
 
 // MARK: - Terminal Service
 
 /// Launch sessions in the host's native terminal application.
-final class TerminalService: Sendable {
+///
+/// `@unchecked Sendable`: the `selectedTerminal` is mutated only from the
+/// main actor (Settings save / app init) while reads happen elsewhere; the
+/// catalog inside `platformInfo` is immutable.
+final class TerminalService: @unchecked Sendable {
     let platformInfo: PlatformInfo
 
+    /// The terminal currently used to open new sessions. Defaults to the
+    /// first installed entry from the catalog; user-overridable via
+    /// `setTerminal(name:path:)`.
+    private(set) var selectedTerminal: TerminalApp
+
     init(platformInfo: PlatformInfo? = nil) {
-        self.platformInfo = platformInfo ?? Self.detectPlatform()
+        let info = platformInfo ?? Self.detectPlatform()
+        self.platformInfo = info
+        self.selectedTerminal = Self.pickDefault(from: info.availableTerminals)
     }
 
     // MARK: - Platform Detection
 
     /// Probe the host and locate the default terminal application.
     static func detectPlatform() -> PlatformInfo {
-        let terminal: String
-        let iTerm = "/Applications/iTerm.app"
-        if FileManager.default.fileExists(atPath: iTerm) {
-            terminal = "iTerm"
-        } else {
-            terminal = "Terminal"
-        }
+        let catalog = Self.discoverTerminals()
+        let defaultTerm = Self.pickDefault(from: catalog)
 
         let hasSshpass = Self.which("sshpass") != nil
         let hasExpect = Self.which("expect") != nil
@@ -68,9 +130,95 @@ final class TerminalService: Sendable {
         return PlatformInfo(
             system: "Darwin",
             systemLabel: "macOS",
-            terminal: terminal,
+            terminal: defaultTerm.name,
             hasSshpass: hasSshpass,
-            hasExpect: hasExpect
+            hasExpect: hasExpect,
+            availableTerminals: catalog
+        )
+    }
+
+    /// Build the deduplicated catalog of terminals known to Connector,
+    /// flagging which ones are actually installed on this Mac.
+    static func discoverTerminals() -> [TerminalApp] {
+        let fm = FileManager.default
+        var byKey: [String: TerminalApp] = [:]
+        var order: [String] = []
+
+        for entry in macTerminalCatalog {
+            let installed = fm.fileExists(atPath: entry.path)
+            // Dedup on (name, launcher) so Terminal.app's two possible
+            // locations collapse to one entry.
+            let key = "\(entry.name)|\(entry.launcher)"
+            if let existing = byKey[key] {
+                // Prefer the path that actually exists.
+                if installed && !existing.installed {
+                    byKey[key] = TerminalApp(
+                        name: entry.name,
+                        path: entry.path,
+                        launcher: entry.launcher,
+                        installed: true
+                    )
+                }
+            } else {
+                byKey[key] = TerminalApp(
+                    name: entry.name,
+                    path: entry.path,
+                    launcher: entry.launcher,
+                    installed: installed
+                )
+                order.append(key)
+            }
+        }
+
+        return order.compactMap { byKey[$0] }
+    }
+
+    /// Return the first installed catalog entry, or a hard fallback.
+    private static func pickDefault(from catalog: [TerminalApp]) -> TerminalApp {
+        if let first = catalog.first(where: { $0.installed }) {
+            return first
+        }
+        return TerminalApp(
+            name: "Terminal",
+            path: "/System/Applications/Utilities/Terminal.app",
+            launcher: TerminalLauncher.appleTerminal,
+            installed: false
+        )
+    }
+
+    // MARK: - Selection
+
+    /// Apply a user-selected terminal. Empty `name` is a no-op (caller can
+    /// pass empty strings to mean "keep the auto-detect default").
+    ///
+    /// When `path` is empty, the catalog's default path for *name* is used.
+    /// Names that aren't in the catalog fall back to the generic
+    /// `open -na <path> --args -e <command>` launcher.
+    func setTerminal(name: String, path: String = "") {
+        guard !name.isEmpty else { return }
+
+        // Try to match the catalog by name to inherit its launcher + default
+        // path. Match against the discovered catalog first (so installed-flag
+        // and exact path stay in sync), then fall back to the static catalog.
+        if let match = platformInfo.availableTerminals.first(where: {
+            $0.name.caseInsensitiveCompare(name) == .orderedSame
+        }) {
+            selectedTerminal = TerminalApp(
+                name: match.name,
+                path: path.isEmpty ? match.path : path,
+                launcher: match.launcher,
+                installed: match.installed
+            )
+            return
+        }
+
+        // User-supplied name that isn't in the catalog: route through the
+        // generic macOS launcher.
+        selectedTerminal = TerminalApp(
+            name: name,
+            path: path.isEmpty ? name : path,
+            launcher: TerminalLauncher.openGeneric,
+            installed: !path.isEmpty && FileManager.default.fileExists(atPath: path)
         )
     }
 
@@ -318,39 +466,80 @@ final class TerminalService: Sendable {
 
     // MARK: - macOS Terminal Launcher
 
-    /// Launch a command in the native macOS terminal via AppleScript.
+    /// Launch a command in the user-selected terminal.
+    ///
+    /// Dispatches to one of several strategies based on
+    /// `selectedTerminal.launcher`. AppleScript is used for Terminal.app
+    /// and iTerm; everything else goes through `open -na <bundle> --args`.
     private func launchInTerminal(_ cmd: String) throws {
+        switch selectedTerminal.launcher {
+        case TerminalLauncher.iTerm:
+            try launchITerm(cmd)
+        case TerminalLauncher.appleTerminal:
+            try launchAppleTerminal(cmd)
+        case TerminalLauncher.ghostty:
+            try launchViaOpen(cmd)
+        case TerminalLauncher.openGeneric:
+            try launchViaOpen(cmd)
+        default:
+            try launchAppleTerminal(cmd)
+        }
+    }
+
+    private func launchAppleTerminal(_ cmd: String) throws {
         let safeCmd = cmd.replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
+        let script = """
+        tell application "Terminal"
+            activate
+            do script "\(safeCmd)"
+        end tell
+        """
+        try runOSAScript(script)
+    }
 
-        let script: String
-        if platformInfo.terminal == "iTerm" {
-            script = """
-            tell application "iTerm"
-                activate
-                create window with default profile command "\(safeCmd)"
-            end tell
-            """
-        } else {
-            script = """
-            tell application "Terminal"
-                activate
-                do script "\(safeCmd)"
-            end tell
-            """
+    private func launchITerm(_ cmd: String) throws {
+        let safeCmd = cmd.replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        let script = """
+        tell application "iTerm"
+            activate
+            create window with default profile command "\(safeCmd)"
+        end tell
+        """
+        try runOSAScript(script)
+    }
+
+    /// Launch a command in any third-party terminal that supports `-e <cmd>`
+    /// (Ghostty, Royal TSX, Alacritty, Kitty, WezTerm, Hyper, …) via
+    /// `open -na <bundle> --args -e <cmd>`.
+    private func launchViaOpen(_ cmd: String) throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        process.arguments = ["-na", selectedTerminal.path, "--args", "-e", cmd]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+        } catch {
+            throw ConnectorError.terminalLaunchFailed(
+                "\(selectedTerminal.name) not found at \(selectedTerminal.path): \(error.localizedDescription)"
+            )
         }
+    }
 
+    /// Run an AppleScript string via /usr/bin/osascript.
+    private func runOSAScript(_ script: String) throws {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
         process.arguments = ["-e", script]
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
-
         do {
             try process.run()
         } catch {
             throw ConnectorError.terminalLaunchFailed(
-                "\(platformInfo.terminal) not found: \(error.localizedDescription)"
+                "\(selectedTerminal.name) not found: \(error.localizedDescription)"
             )
         }
     }

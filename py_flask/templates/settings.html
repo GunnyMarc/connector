@@ -7,12 +7,21 @@
     <p class="text-muted" style="font-size:.82rem;">Global defaults for new sessions.</p>
 
     <form method="POST">
-        <!-- Platform (read-only) -->
+        <!-- Platform -->
         <fieldset class="mb-3">
             <legend class="wp-legend">Platform</legend>
             <table class="table table-sm detail-table mb-0">
                 <tr><th>OS</th><td>{{ platform_info.system_label }}</td></tr>
-                <tr><th>Terminal</th><td>{{ platform_info.terminal }}</td></tr>
+                <tr><th>Active Terminal</th>
+                    <td>
+                        {{ platform_info.terminal }}
+                        {% if platform_info.terminal_cmd and platform_info.terminal_cmd != platform_info.terminal %}
+                        <span class="text-muted" style="font-size:.78rem;">
+                            ({{ platform_info.terminal_cmd }})
+                        </span>
+                        {% endif %}
+                    </td>
+                </tr>
                 <tr>
                     <th>sshpass</th>
                     <td>
@@ -24,6 +33,49 @@
                     </td>
                 </tr>
             </table>
+        </fieldset>
+
+        <hr class="border-secondary">
+
+        <!-- Terminal selection -->
+        <fieldset class="mb-3">
+            <legend class="wp-legend">Terminal Application</legend>
+            <p class="text-muted" style="font-size:.82rem;">
+                Choose which terminal application opens new sessions.
+                Pick a detected install from the list, or supply a custom
+                application path below (e.g. <code>/Applications/Ghostty.app</code>,
+                <code>/Applications/Royal TSX.app</code>).
+            </p>
+            <div class="row">
+                <div class="col-6 mb-2">
+                    <label for="terminal_name" class="form-label">Terminal</label>
+                    <select class="form-select form-select-sm"
+                            id="terminal_name" name="terminal_name">
+                        <option value="" {{ "selected" if not settings.terminal_name }}>
+                            Auto-detect ({{ platform_info.terminal }})
+                        </option>
+                        {% for t in platform_info.available_terminals %}
+                        <option value="{{ t.name }}"
+                                data-path="{{ t.path }}"
+                                {{ "selected" if settings.terminal_name == t.name }}>
+                            {{ t.name }}{% if not t.installed %} (not installed){% endif %}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-6 mb-2">
+                    <label for="terminal_path" class="form-label">
+                        Application Path
+                        <span class="text-muted" style="font-size:.75rem;">
+                            (optional override)
+                        </span>
+                    </label>
+                    <input type="text" class="form-control form-control-sm"
+                           id="terminal_path" name="terminal_path"
+                           value="{{ settings.terminal_path }}"
+                           placeholder="(use default for selected terminal)">
+                </div>
+            </div>
         </fieldset>
 
         <hr class="border-secondary">

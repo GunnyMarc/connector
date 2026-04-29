@@ -1,9 +1,14 @@
 """Platform detection and native terminal launcher for connections.
 
-Detects the host OS at startup and identifies the default terminal
-application.  Provides :meth:`launch_session` (protocol-aware) and the
-legacy :meth:`launch_ssh` to open interactive sessions in the native
-terminal.
+Detects the host OS at startup, enumerates installed terminal applications,
+and launches interactive sessions in the user's chosen terminal.
+
+The catalog of supported terminals lives in ``_TERMINAL_CATALOGS`` keyed by
+host OS.  Each entry carries enough metadata for both *detection* (where to
+look for the install) and *launching* (which launch strategy to use).  Users
+override the auto-detected default via the application Settings UI; the
+preference is persisted in the encrypted settings file as the keys
+``terminal_name`` and ``terminal_path``.
 """
 
 from __future__ import annotations
@@ -14,10 +19,23 @@ import platform
 import shlex
 import shutil
 import subprocess
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Optional
 
 log = logging.getLogger(__name__)
+
+
+# ── Data classes ──────────────────────────────────────────────────────────────
+
+
+@dataclass
+class TerminalApp:
+    """Metadata describing one terminal application option."""
+
+    name: str            # Human-readable name shown in Settings (e.g. "iTerm")
+    path: str            # Bundle path (macOS) or executable name/path
+    launcher: str        # Launch strategy id — see ``_LAUNCHERS``
+    installed: bool = False
 
 
 @dataclass
@@ -26,12 +44,20 @@ class PlatformInfo:
 
     system: str          # 'Darwin', 'Linux', 'Windows'
     system_label: str    # 'macOS', 'Linux', 'Windows'
-    terminal: str        # Human-readable terminal name
-    terminal_cmd: str    # Executable used to launch the terminal
+    terminal: str        # Currently selected terminal name
+    terminal_cmd: str    # Currently selected terminal path/executable
+    terminal_launcher: str  # Currently selected launcher strategy id
     has_sshpass: bool    # True if ``sshpass`` is on PATH
+    available_terminals: list[TerminalApp] = field(default_factory=list)
+
+    def to_dict(self) -> dict:
+        """Return a JSON-serialisable representation (used in templates)."""
+        d = asdict(self)
+        d["available_terminals"] = [asdict(t) for t in self.available_terminals]
+        return d
 
 
-# ── Detection helpers ─────────────────────────────────────────────────────────
+# ── Terminal catalogs ─────────────────────────────────────────────────────────
 
 _SYSTEM_LABELS = {
     "Darwin": "macOS",
@@ -39,54 +65,98 @@ _SYSTEM_LABELS = {
     "Windows": "Windows",
 }
 
-# macOS terminals checked in preference order
-_MACOS_TERMINALS = [
-    ("iTerm", "/Applications/iTerm.app"),
-    ("Terminal", "/System/Applications/Utilities/Terminal.app"),
-    ("Terminal", "/Applications/Utilities/Terminal.app"),
-]
-
-# Linux terminals: (human name, executable)
-_LINUX_TERMINALS = [
-    ("GNOME Terminal", "gnome-terminal"),
-    ("Konsole", "konsole"),
-    ("Xfce Terminal", "xfce4-terminal"),
-    ("MATE Terminal", "mate-terminal"),
-    ("LXTerminal", "lxterminal"),
-    ("Tilix", "tilix"),
-    ("Alacritty", "alacritty"),
-    ("xterm", "xterm"),
-]
-
-# Windows terminals
-_WINDOWS_TERMINALS = [
-    ("Windows Terminal", "wt"),
-    ("Command Prompt", "cmd"),
-]
-
-
-def _detect_macos_terminal() -> tuple[str, str]:
-    """Return ``(name, app_name)`` for the first available macOS terminal."""
-    for name, app_path in _MACOS_TERMINALS:
-        if os.path.exists(app_path):
-            return name, name
-    return "Terminal", "Terminal"
-
-
-def _detect_linux_terminal() -> tuple[str, str]:
-    """Return ``(name, executable)`` for the first available Linux terminal."""
-    for name, cmd in _LINUX_TERMINALS:
-        if shutil.which(cmd):
-            return name, cmd
-    return "xterm", "xterm"
+# Each catalog entry is (name, default-path, launcher-id).
+# ``launcher`` selects the AppleScript / argv strategy used to launch a command.
+_TERMINAL_CATALOGS: dict[str, list[tuple[str, str, str]]] = {
+    "Darwin": [
+        ("iTerm", "/Applications/iTerm.app", "macos_iterm"),
+        ("Ghostty", "/Applications/Ghostty.app", "macos_ghostty"),
+        ("Royal TSX", "/Applications/Royal TSX.app", "macos_open"),
+        ("Alacritty", "/Applications/Alacritty.app", "macos_open"),
+        ("Kitty", "/Applications/kitty.app", "macos_open"),
+        ("WezTerm", "/Applications/WezTerm.app", "macos_open"),
+        ("Hyper", "/Applications/Hyper.app", "macos_open"),
+        ("Terminal", "/System/Applications/Utilities/Terminal.app", "macos_terminal"),
+        ("Terminal", "/Applications/Utilities/Terminal.app", "macos_terminal"),
+    ],
+    "Linux": [
+        ("GNOME Terminal", "gnome-terminal", "linux_gnome"),
+        ("Konsole", "konsole", "linux_konsole"),
+        ("Xfce Terminal", "xfce4-terminal", "linux_xfce"),
+        ("MATE Terminal", "mate-terminal", "linux_konsole"),
+        ("LXTerminal", "lxterminal", "linux_generic"),
+        ("Tilix", "tilix", "linux_tilix"),
+        ("Alacritty", "alacritty", "linux_alacritty"),
+        ("Kitty", "kitty", "linux_alacritty"),
+        ("WezTerm", "wezterm", "linux_alacritty"),
+        ("Ghostty", "ghostty", "linux_alacritty"),
+        ("xterm", "xterm", "linux_generic"),
+    ],
+    "Windows": [
+        ("Windows Terminal", "wt", "windows_wt"),
+        ("Command Prompt", "cmd", "windows_cmd"),
+    ],
+}
 
 
-def _detect_windows_terminal() -> tuple[str, str]:
-    """Return ``(name, executable)`` for the first available Windows terminal."""
-    for name, cmd in _WINDOWS_TERMINALS:
-        if shutil.which(cmd):
-            return name, cmd
-    return "Command Prompt", "cmd"
+def _is_installed(system: str, path: str) -> bool:
+    """Return True if a terminal at *path* is installed on the host."""
+    if system == "Darwin":
+        # macOS: catalog entries are .app bundle paths.
+        return os.path.exists(path)
+    # Linux / Windows: catalog entries are executable names (or paths).
+    if os.sep in path or (os.altsep and os.altsep in path):
+        return os.path.exists(path)
+    return shutil.which(path) is not None
+
+
+def discover_terminals(system: Optional[str] = None) -> list[TerminalApp]:
+    """Return the platform's catalog with each entry's *installed* flag set.
+
+    De-duplicates entries that share the same ``(name, launcher)`` and keep
+    only the first installed path (so the macOS Terminal.app's two possible
+    locations collapse to a single entry).
+    """
+    sys_name = system or platform.system()
+    catalog = _TERMINAL_CATALOGS.get(sys_name, [])
+
+    seen: dict[tuple[str, str], TerminalApp] = {}
+    for name, path, launcher in catalog:
+        installed = _is_installed(sys_name, path)
+        key = (name, launcher)
+        existing = seen.get(key)
+        if existing is None:
+            seen[key] = TerminalApp(
+                name=name, path=path, launcher=launcher, installed=installed,
+            )
+        elif installed and not existing.installed:
+            # Prefer the path that actually exists.
+            existing.path = path
+            existing.installed = True
+
+    return list(seen.values())
+
+
+def _pick_default(terminals: list[TerminalApp], system: str) -> TerminalApp:
+    """Return the first installed terminal, or a sensible fallback."""
+    for term in terminals:
+        if term.installed:
+            return term
+
+    # Hard fallbacks when no catalog entry is installed.
+    fallbacks = {
+        "Darwin": TerminalApp(
+            name="Terminal", path="Terminal", launcher="macos_terminal",
+        ),
+        "Linux": TerminalApp(name="xterm", path="xterm", launcher="linux_generic"),
+        "Windows": TerminalApp(
+            name="Command Prompt", path="cmd", launcher="windows_cmd",
+        ),
+    }
+    return fallbacks.get(
+        system,
+        TerminalApp(name="unknown", path="unknown", launcher="generic"),
+    )
 
 
 def detect_platform() -> PlatformInfo:
@@ -94,29 +164,45 @@ def detect_platform() -> PlatformInfo:
     system = platform.system()
     label = _SYSTEM_LABELS.get(system, system)
 
-    if system == "Darwin":
-        term_name, term_cmd = _detect_macos_terminal()
-    elif system == "Linux":
-        term_name, term_cmd = _detect_linux_terminal()
-    elif system == "Windows":
-        term_name, term_cmd = _detect_windows_terminal()
-    else:
-        term_name, term_cmd = "unknown", "unknown"
-
+    terminals = discover_terminals(system)
+    default = _pick_default(terminals, system)
     has_sshpass = shutil.which("sshpass") is not None
 
     info = PlatformInfo(
         system=system,
         system_label=label,
-        terminal=term_name,
-        terminal_cmd=term_cmd,
+        terminal=default.name,
+        terminal_cmd=default.path,
+        terminal_launcher=default.launcher,
         has_sshpass=has_sshpass,
+        available_terminals=terminals,
     )
     log.info(
-        "Detected platform: %s, terminal: %s, sshpass: %s",
-        label, term_name, "yes" if has_sshpass else "no",
+        "Detected platform: %s, terminal: %s (%s), sshpass: %s",
+        label, default.name, default.path, "yes" if has_sshpass else "no",
     )
     return info
+
+
+def _resolve_launcher(
+    system: str, name: str, path: str,
+) -> str:
+    """Find the launcher id for a terminal by matching the catalog by name.
+
+    Falls back to a platform-default launcher if the name is not in the
+    catalog (e.g. a user-supplied custom path).
+    """
+    for cat_name, _cat_path, launcher in _TERMINAL_CATALOGS.get(system, []):
+        if cat_name.lower() == name.lower():
+            return launcher
+
+    if system == "Darwin":
+        return "macos_open"
+    if system == "Linux":
+        return "linux_generic"
+    if system == "Windows":
+        return "windows_cmd"
+    return "generic"
 
 
 # ── Session launcher ──────────────────────────────────────────────────────────
@@ -127,6 +213,32 @@ class TerminalService:
 
     def __init__(self, platform_info: Optional[PlatformInfo] = None) -> None:
         self.platform_info = platform_info or detect_platform()
+
+    # -- Configuration -------------------------------------------------------
+
+    def set_terminal(self, name: str, path: str = "") -> None:
+        """Apply a user-selected terminal at runtime.
+
+        *name* is required (the human-readable label used to pick a launcher
+        strategy). *path* is the bundle path / executable; when blank, falls
+        back to the catalog's default path for that name.
+        """
+        if not name:
+            return
+
+        system = self.platform_info.system
+
+        # Default the path from the catalog entry if the user left it blank.
+        if not path:
+            for cat_name, cat_path, _launcher in _TERMINAL_CATALOGS.get(system, []):
+                if cat_name.lower() == name.lower():
+                    path = cat_path
+                    break
+
+        launcher = _resolve_launcher(system, name, path)
+        self.platform_info.terminal = name
+        self.platform_info.terminal_cmd = path or name
+        self.platform_info.terminal_launcher = launcher
 
     # -- Public API ----------------------------------------------------------
 
@@ -167,19 +279,15 @@ class TerminalService:
     # -- Internal launcher ---------------------------------------------------
 
     def _launch_in_terminal(self, cmd: str) -> None:
-        """Dispatch *cmd* to the platform-specific terminal launcher."""
-        system = self.platform_info.system
+        """Dispatch *cmd* to the configured terminal's launch strategy."""
+        launcher = self.platform_info.terminal_launcher
+        handler = _LAUNCHERS.get(launcher)
+        if handler is None:
+            raise RuntimeError(
+                f"No launch strategy for terminal '{self.platform_info.terminal}'"
+            )
         try:
-            if system == "Darwin":
-                self._launch_macos(cmd)
-            elif system == "Linux":
-                self._launch_linux(cmd)
-            elif system == "Windows":
-                self._launch_windows(cmd)
-            else:
-                raise RuntimeError(
-                    f"Unsupported platform: {self.platform_info.system_label}"
-                )
+            handler(self, cmd)
         except FileNotFoundError as exc:
             raise RuntimeError(
                 f"Terminal '{self.platform_info.terminal}' not found: {exc}"
@@ -288,73 +396,151 @@ class TerminalService:
 
         return ssh_cmd
 
-    # -- Platform-specific launchers -----------------------------------------
 
-    def _launch_macos(self, ssh_cmd: str) -> None:
-        """Open a new terminal window on macOS via AppleScript."""
-        terminal = self.platform_info.terminal
+# ── Launcher strategies ───────────────────────────────────────────────────────
+#
+# Each launcher is a free function ``(svc: TerminalService, cmd: str) -> None``
+# that opens *cmd* in a specific terminal application.  Keeping the strategies
+# as a registry makes it cheap to add new terminals (e.g. Ghostty, Royal TSX)
+# without growing the if/elif tree inside ``TerminalService``.
 
-        # Escape backslashes and double-quotes for AppleScript string context
-        safe_cmd = ssh_cmd.replace("\\", "\\\\").replace('"', '\\"')
 
-        if terminal == "iTerm":
-            script = (
-                'tell application "iTerm"\n'
-                "    activate\n"
-                "    create window with default profile "
-                f'command "{safe_cmd}"\n'
-                "end tell"
-            )
-        else:
-            script = (
-                'tell application "Terminal"\n'
-                "    activate\n"
-                f'    do script "{safe_cmd}"\n'
-                "end tell"
-            )
+def _macos_app_name(path: str) -> str:
+    """Return the bundle's display name from a ``.app`` path (no extension)."""
+    base = os.path.basename(path.rstrip("/"))
+    return base[:-4] if base.lower().endswith(".app") else base
 
-        subprocess.Popen(
-            ["osascript", "-e", script],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
 
-    def _launch_linux(self, ssh_cmd: str) -> None:
-        """Open a new terminal window on Linux."""
-        cmd = self.platform_info.terminal_cmd
+def _ascii_safe(cmd: str) -> str:
+    """Escape backslashes and double-quotes for AppleScript string context."""
+    return cmd.replace("\\", "\\\\").replace('"', '\\"')
 
-        # Most Linux terminals accept a common pattern; a few differ.
-        if cmd == "gnome-terminal":
-            args = [cmd, "--", "bash", "-c", ssh_cmd + "; exec bash"]
-        elif cmd in ("konsole", "mate-terminal"):
-            args = [cmd, "-e", "bash", "-c", ssh_cmd + "; exec bash"]
-        elif cmd == "xfce4-terminal":
-            args = [cmd, "--command", ssh_cmd]
-        elif cmd == "tilix":
-            args = [cmd, "-e", ssh_cmd]
-        elif cmd == "alacritty":
-            args = [cmd, "-e", "bash", "-c", ssh_cmd + "; exec bash"]
-        else:
-            # xterm and generic fallback
-            args = [cmd, "-e", ssh_cmd]
 
-        subprocess.Popen(
-            args,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
+def _launch_macos_terminal(svc: "TerminalService", cmd: str) -> None:
+    """Apple Terminal.app via AppleScript ``do script``."""
+    safe = _ascii_safe(cmd)
+    script = (
+        'tell application "Terminal"\n'
+        "    activate\n"
+        f'    do script "{safe}"\n'
+        "end tell"
+    )
+    subprocess.Popen(
+        ["osascript", "-e", script],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
 
-    def _launch_windows(self, ssh_cmd: str) -> None:
-        """Open a new terminal window on Windows."""
-        cmd = self.platform_info.terminal_cmd
 
-        if cmd == "wt":
-            args = [cmd, "cmd", "/k", ssh_cmd]
-        else:
-            args = ["cmd", "/c", "start", "cmd", "/k", ssh_cmd]
+def _launch_macos_iterm(svc: "TerminalService", cmd: str) -> None:
+    """iTerm via AppleScript ``create window with default profile``."""
+    safe = _ascii_safe(cmd)
+    script = (
+        'tell application "iTerm"\n'
+        "    activate\n"
+        "    create window with default profile "
+        f'command "{safe}"\n'
+        "end tell"
+    )
+    subprocess.Popen(
+        ["osascript", "-e", script],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
 
-        subprocess.Popen(
-            args,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
+
+def _launch_macos_ghostty(svc: "TerminalService", cmd: str) -> None:
+    """Ghostty: pass the command via the ``-e`` flag in a new instance."""
+    app_path = svc.platform_info.terminal_cmd
+    # Ghostty supports `-e <cmd>` to run a command in a new window.
+    subprocess.Popen(
+        ["open", "-na", app_path, "--args", "-e", cmd],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+
+
+def _launch_macos_open(svc: "TerminalService", cmd: str) -> None:
+    """Generic macOS launch via ``open -na <app> --args <cmd>``.
+
+    Used for terminals like Royal TSX, Alacritty, Kitty, WezTerm, Hyper.
+    Many terminals accept ``-e <cmd>``; for those that don't, the command
+    appears as an extra argv element which is harmless.
+    """
+    app_path = svc.platform_info.terminal_cmd
+    subprocess.Popen(
+        ["open", "-na", app_path, "--args", "-e", cmd],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+
+
+def _launch_linux_gnome(svc: "TerminalService", cmd: str) -> None:
+    subprocess.Popen(
+        [svc.platform_info.terminal_cmd, "--", "bash", "-c", cmd + "; exec bash"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+
+
+def _launch_linux_konsole(svc: "TerminalService", cmd: str) -> None:
+    subprocess.Popen(
+        [svc.platform_info.terminal_cmd, "-e", "bash", "-c", cmd + "; exec bash"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+
+
+def _launch_linux_xfce(svc: "TerminalService", cmd: str) -> None:
+    subprocess.Popen(
+        [svc.platform_info.terminal_cmd, "--command", cmd],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+
+
+def _launch_linux_tilix(svc: "TerminalService", cmd: str) -> None:
+    subprocess.Popen(
+        [svc.platform_info.terminal_cmd, "-e", cmd],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+
+
+def _launch_linux_alacritty(svc: "TerminalService", cmd: str) -> None:
+    """Alacritty / Kitty / WezTerm / Ghostty (Linux) — all support ``-e``."""
+    subprocess.Popen(
+        [svc.platform_info.terminal_cmd, "-e", "bash", "-c", cmd + "; exec bash"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+
+
+def _launch_linux_generic(svc: "TerminalService", cmd: str) -> None:
+    """xterm and last-resort fallback."""
+    subprocess.Popen(
+        [svc.platform_info.terminal_cmd, "-e", cmd],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+
+
+def _launch_windows_wt(svc: "TerminalService", cmd: str) -> None:
+    subprocess.Popen(
+        [svc.platform_info.terminal_cmd, "cmd", "/k", cmd],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+
+
+def _launch_windows_cmd(svc: "TerminalService", cmd: str) -> None:
+    subprocess.Popen(
+        ["cmd", "/c", "start", "cmd", "/k", cmd],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+
+
+_LAUNCHERS = {
+    "macos_terminal": _launch_macos_terminal,
+    "macos_iterm": _launch_macos_iterm,
+    "macos_ghostty": _launch_macos_ghostty,
+    "macos_open": _launch_macos_open,
+    "linux_gnome": _launch_linux_gnome,
+    "linux_konsole": _launch_linux_konsole,
+    "linux_xfce": _launch_linux_xfce,
+    "linux_tilix": _launch_linux_tilix,
+    "linux_alacritty": _launch_linux_alacritty,
+    "linux_generic": _launch_linux_generic,
+    "windows_wt": _launch_windows_wt,
+    "windows_cmd": _launch_windows_cmd,
+    "generic": _launch_linux_generic,
+}

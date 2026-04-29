@@ -35,6 +35,12 @@ struct ConnectorApp: App {
         let settingsService = SettingsService(fileURL: Self.settingsURL, crypto: crypto)
         let terminal = TerminalService()
 
+        // Apply the saved terminal preference (if any) so the first launch
+        // after settings are persisted uses the user's choice.
+        if let saved = try? settingsService.getAll(), !saved.terminalName.isEmpty {
+            terminal.setTerminal(name: saved.terminalName, path: saved.terminalPath)
+        }
+
         self.crypto = crypto
         self.storage = storage
         self.settingsService = settingsService

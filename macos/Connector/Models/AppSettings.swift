@@ -14,6 +14,11 @@ struct AppSettings: Codable, Sendable {
     var defaultAuthType: String
     var defaultKeyPath: String
     var folders: [String]
+    /// User-selected terminal application name. Empty string = auto-detect.
+    var terminalName: String
+    /// Optional override for the selected terminal's bundle path.
+    /// Empty string = use the catalog default for `terminalName`.
+    var terminalPath: String
 
     /// Factory defaults matching the Python app.
     static let defaults = AppSettings(
@@ -23,7 +28,9 @@ struct AppSettings: Codable, Sendable {
         defaultUsername: "",
         defaultAuthType: "password",
         defaultKeyPath: "~/.ssh/id_rsa",
-        folders: []
+        folders: [],
+        terminalName: "",
+        terminalPath: ""
     )
 
     enum CodingKeys: String, CodingKey {
@@ -34,6 +41,8 @@ struct AppSettings: Codable, Sendable {
         case defaultAuthType = "default_auth_type"
         case defaultKeyPath  = "default_key_path"
         case folders
+        case terminalName    = "terminal_name"
+        case terminalPath    = "terminal_path"
     }
 
     /// Decode with fallback to defaults for any missing keys.
@@ -48,6 +57,8 @@ struct AppSettings: Codable, Sendable {
         defaultAuthType = (try? container.decode(String.self, forKey: .defaultAuthType)) ?? d.defaultAuthType
         defaultKeyPath  = (try? container.decode(String.self, forKey: .defaultKeyPath))  ?? d.defaultKeyPath
         folders         = (try? container.decode([String].self, forKey: .folders))     ?? d.folders
+        terminalName    = (try? container.decode(String.self, forKey: .terminalName))    ?? d.terminalName
+        terminalPath    = (try? container.decode(String.self, forKey: .terminalPath))    ?? d.terminalPath
     }
 
     init(
@@ -57,7 +68,9 @@ struct AppSettings: Codable, Sendable {
         defaultUsername: String = "",
         defaultAuthType: String = "password",
         defaultKeyPath: String = "~/.ssh/id_rsa",
-        folders: [String] = []
+        folders: [String] = [],
+        terminalName: String = "",
+        terminalPath: String = ""
     ) {
         self.defaultPort = defaultPort
         self.sshTimeout = sshTimeout
@@ -66,5 +79,7 @@ struct AppSettings: Codable, Sendable {
         self.defaultAuthType = defaultAuthType
         self.defaultKeyPath = defaultKeyPath
         self.folders = folders
+        self.terminalName = terminalName
+        self.terminalPath = terminalPath
     }
 }

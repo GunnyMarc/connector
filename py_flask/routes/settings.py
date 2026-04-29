@@ -19,6 +19,7 @@ from flask import (
 from py_flask.models.site import Site
 from py_flask.services.settings_service import SettingsService
 from py_flask.services.storage import SiteStorage
+from py_flask.services.terminal_service import TerminalService
 
 settings_bp = Blueprint("settings", __name__)
 
@@ -36,6 +37,11 @@ def _storage() -> SiteStorage:
     return current_app.config["STORAGE"]
 
 
+def _terminal() -> TerminalService:
+    """Retrieve the shared :class:`TerminalService` from the app config."""
+    return current_app.config["TERMINAL"]
+
+
 # ── Settings page ─────────────────────────────────────────────────────────────
 
 
@@ -48,6 +54,8 @@ def index():
     svc = _settings()
 
     if request.method == "POST":
+        terminal_name = request.form.get("terminal_name", "").strip()
+        terminal_path = request.form.get("terminal_path", "").strip()
         updates = {
             "default_port": int(request.form.get("default_port", 22)),
             "ssh_timeout": int(request.form.get("ssh_timeout", 10)),
@@ -55,8 +63,14 @@ def index():
             "default_username": request.form.get("default_username", ""),
             "default_auth_type": request.form.get("default_auth_type", "password"),
             "default_key_path": request.form.get("default_key_path", "~/.ssh/id_rsa"),
+            "terminal_name": terminal_name,
+            "terminal_path": terminal_path,
         }
         svc.update(updates)
+        # Apply the new terminal selection live so the next launch uses it
+        # without restarting the app.
+        if terminal_name:
+            _terminal().set_terminal(terminal_name, terminal_path)
         flash("Settings saved.", "success")
         return redirect(url_for("settings.index"))
 

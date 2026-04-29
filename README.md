@@ -42,6 +42,7 @@ Connector lets you organise remote sessions into folders, store credentials secu
   - [Folders and Organisation](#folders-and-organisation)
   - [Quick Connect](#quick-connect)
   - [Settings](#settings)
+  - [Terminal Application Selection](#terminal-application-selection)
   - [Import and Export](#import-and-export)
 - [Running in Production](#running-in-production)
 - [Development](#development)
@@ -58,7 +59,7 @@ Connector lets you organise remote sessions into folders, store credentials secu
 
 - **Multi-protocol support** -- SSH2, SSH1, Local Shell, Raw TCP, Telnet, and Serial connections from a single interface
 - **Encrypted storage** -- all credentials (passwords, key paths) encrypted at rest with Fernet (AES-128-CBC + HMAC)
-- **Native terminal launch** -- opens sessions in your OS terminal (Terminal.app, iTerm, GNOME Terminal, Windows Terminal, and more)
+- **Native terminal launch** -- opens sessions in your OS terminal (Terminal.app, iTerm, Ghostty, Royal TSX, GNOME Terminal, Windows Terminal, and more); the active terminal is **user-selectable** in Settings
 - **SFTP file browser** -- browse, upload, and download files through the web UI (SSH sessions)
 - **Hierarchical folders** -- group sessions into collapsible, drag-and-drop folders with arbitrary subfolder nesting (path-based hierarchy, e.g. `AWS/Production`)
 - **Import / Export** -- export all sessions and folder structure to a portable JSON file (credentials stripped); import merges folders and deduplicates sessions
@@ -484,8 +485,13 @@ SiteStorage  TerminalService
     |       ssh2 ssh1 local raw  tel  serial
     |         |    |    |    |    |    |
     |         v    v    v    v    v    v
-    |    _launch_macos() / _launch_linux() / _launch_windows()
+    |    _launch_in_terminal()  --dispatches via launcher id-->
     |              |
+    |              +--> _LAUNCHERS registry  (one strategy per terminal)
+    |                       macos_terminal | macos_iterm | macos_ghostty |
+    |                       macos_open     | linux_gnome | linux_konsole |
+    |                       linux_xfce     | linux_tilix | linux_alacritty |
+    |                       linux_generic  | windows_wt  | windows_cmd
     v              v
 Encrypted     Native terminal runs protocol command:
 data/.enc       ssh2:   ssh user@host -p port
@@ -495,6 +501,8 @@ data/.enc       ssh2:   ssh user@host -p port
                 telnet: telnet [-l user] host [port]
                 serial: screen /dev/ttyUSB0 9600
 ```
+
+The chosen terminal (and the launcher strategy used to open it) is read from the encrypted settings file at startup via `TerminalService.set_terminal()`, and updated live whenever the user saves the Settings page. See [Terminal Application Selection](#terminal-application-selection) below.
 
 ### Encryption Pipeline
 
@@ -597,13 +605,15 @@ The sidebar uses distinct icons for each protocol type for quick identification.
 
 The button label adapts to the protocol: "Open SSH", "Open Shell", "Open Telnet", "Open Serial", or "Open Connection".
 
-Connector opens your platform's native terminal application:
+Connector opens your platform's native terminal application. At startup it scans for installed terminals and picks a default; you can override the choice from the **Settings** page (see [Terminal Application Selection](#terminal-application-selection)).
 
-| Platform | Terminals detected (in preference order) |
+| Platform | Detected terminals (auto-detect preference order) |
 |---|---|
-| macOS | iTerm, Terminal.app |
-| Linux | GNOME Terminal, Konsole, Xfce Terminal, MATE Terminal, LXTerminal, Tilix, Alacritty, xterm |
+| macOS | iTerm, Ghostty, Royal TSX, Alacritty, Kitty, WezTerm, Hyper, Terminal.app |
+| Linux | GNOME Terminal, Konsole, Xfce Terminal, MATE Terminal, LXTerminal, Tilix, Alacritty, Kitty, WezTerm, Ghostty, xterm |
 | Windows | Windows Terminal, Command Prompt |
+
+Terminals not in the catalog can still be used by entering a custom application path in the Settings form; Connector falls back to a generic launcher (`open -na <app> --args -e <cmd>` on macOS, `<exe> -e <cmd>` on Linux) for unknown apps.
 
 **Password auto-login (SSH only):** If the session has a stored password and `sshpass` is installed on your system, the password is passed automatically via the `SSHPASS` environment variable. Otherwise, the terminal will prompt you interactively.
 
@@ -671,7 +681,123 @@ Navigate to `/settings` (or click the gear icon in the sidebar toolbar) to confi
 
 - **Connection Defaults** -- default SSH port, username, auth type, and key path applied when creating new sessions
 - **Timeouts** -- SSH connection timeout (1-300s) and command execution timeout (1-600s)
-- **Platform Info** (read-only) -- detected OS, terminal application, and `sshpass` status
+- **Terminal Application** -- choose which detected terminal opens new sessions, or override with a custom application path (see below)
+- **Platform Info** (read-only) -- detected OS, the *active* terminal (after preference is applied), and `sshpass` status
+
+### Terminal Application Selection
+
+The Settings page exposes a **Terminal Application** fieldset with two controls:
+
+- **Terminal** dropdown -- lists every entry in the platform's terminal catalog. Items that aren't installed are still selectable but annotated `(not installed)`. The first option, `Auto-detect (<name>)`, defers to whatever Connector detected at startup.
+- **Application Path** text field -- optional override. Leave blank to use the catalog's default path for the selected terminal (e.g. `/Applications/Ghostty.app`). For terminals installed in non-standard locations or that aren't in the catalog at all, type a custom name in the dropdown's HTML and put the path here.
+
+Saving the form persists `terminal_name` and `terminal_path` into the encrypted settings file and **applies the change immediately** -- the next session you launch uses the new terminal without restarting Connector.
+
+Catalog entries (`name`, default path, launcher strategy) live in `_TERMINAL_CATALOGS` inside `py_flask/services/terminal_service.py`. To add support for a new terminal, append a row to the platform's list and -- if its launch syntax differs from existing entries -- register a function in the `_LAUNCHERS` dict.
+
+#### Step-by-step: switching the terminal application
+
+The procedure is the same for every platform; only the path conventions differ.
+
+1. **Make sure the terminal is installed.** Connector's dropdown only marks an entry as available when its catalog path resolves. Verify with one of:
+   - macOS: `ls -d /Applications/Ghostty.app` (or the bundle for whichever app you want -- iTerm, Royal TSX, WezTerm, Terminal.app, etc.).
+   - Linux: `command -v ghostty` (or `gnome-terminal`, `konsole`, `alacritty`, `kitty`, ...).
+   - Windows: `where wt` for Windows Terminal.
+2. **Open Settings** in the web UI. Click the gear icon in the sidebar toolbar, or navigate directly to <http://127.0.0.1:5101/settings>.
+3. **Scroll to the Terminal Application fieldset.** It sits between *Platform* and *Connection Defaults*.
+4. **Pick the terminal in the Terminal dropdown.**
+   - The first option, `Auto-detect (<name>)`, lets Connector keep using whatever it found on startup -- choose this to undo a previous override.
+   - Catalog entries marked `(not installed)` are still selectable; if you select one Connector will fall back to the generic launcher and rely on the path you supply in the next field.
+5. **Leave Application Path blank** for a catalog terminal in its standard location. The default path for that name is filled in automatically when you save (`/Applications/Ghostty.app`, `/Applications/iTerm.app`, `/System/Applications/Utilities/Terminal.app`, the executable name on Linux, etc.).
+6. **Override Application Path only if needed.** Use it for:
+   - Apps installed under `~/Applications`, on an external volume, or in a non-default Linux prefix (e.g. `/opt/ghostty/bin/ghostty`).
+   - Terminals not present in the catalog at all (any value works in the dropdown -- Connector will use the platform's generic launcher and the path you provide).
+7. **Click Save.** A green "Settings saved." flash confirms persistence. The header section now shows the new selection under **Active Terminal**.
+8. **Test by launching a session.** Open any saved session and click **Connect** (or use Quick Connect). The new terminal should pop up. If it doesn't, see the troubleshooting list at the end of this section.
+
+#### Concrete recipes
+
+**macOS -- switch to Ghostty:**
+
+```
+1. Verify install:        ls -d /Applications/Ghostty.app
+2. Settings -> Terminal:  Ghostty
+3. Application Path:      (blank -- defaults to /Applications/Ghostty.app)
+4. Save -> Active Terminal now reads "Ghostty (/Applications/Ghostty.app)"
+5. Connect to any SSH session to confirm Ghostty opens.
+```
+
+**macOS -- switch back to Terminal.app:**
+
+```
+1. Settings -> Terminal:  Terminal
+2. Application Path:      (blank)
+3. Save. Active Terminal reads "Terminal".
+```
+
+**macOS -- switch to Royal TSX (catalog default path is `/Applications/Royal TSX.app`):**
+
+```
+1. Verify install:        ls -d "/Applications/Royal TSX.app"
+2. Settings -> Terminal:  Royal TSX
+3. Application Path:      (blank, or override if installed elsewhere)
+4. Save and Connect.
+```
+
+**macOS -- switch to a terminal Connector doesn't know about (e.g. a custom build of Tabby in `~/Applications`):**
+
+```
+1. In the dropdown, pick any entry; the value gets saved verbatim.
+   (Open the page source if you want to put a custom string in -- the
+   form accepts whatever name is submitted.)
+2. Application Path:      /Users/<you>/Applications/Tabby.app
+3. Save. Connector uses the macos_open generic launcher, which runs
+   `open -na "<path>" --args -e <command>`.
+```
+
+**Linux -- switch to Ghostty:**
+
+```
+1. Verify install:        command -v ghostty
+2. Settings -> Terminal:  Ghostty
+3. Application Path:      (blank, falls back to PATH lookup of `ghostty`)
+                          or /opt/ghostty/bin/ghostty for a non-standard install.
+4. Save and Connect.
+```
+
+**Linux -- switch to GNOME Terminal:**
+
+```
+1. Verify install:        command -v gnome-terminal
+2. Settings -> Terminal:  GNOME Terminal
+3. Application Path:      (blank)
+4. Save.
+```
+
+**Windows -- switch to Windows Terminal:**
+
+```
+1. Verify install:        where wt
+2. Settings -> Terminal:  Windows Terminal
+3. Application Path:      (blank, or full path to wt.exe)
+4. Save.
+```
+
+#### Reverting to auto-detect
+
+To clear a saved preference and let Connector pick the default terminal again:
+
+1. Open Settings.
+2. Set the Terminal dropdown back to `Auto-detect (<name>)`.
+3. Clear the Application Path field.
+4. Save. The persisted `terminal_name` and `terminal_path` are now empty strings, so on next startup Connector will fall back to the first installed entry from the catalog.
+
+#### Troubleshooting
+
+- **Nothing happens when I click Connect.** Confirm **Active Terminal** in Settings shows the app you expect. If the path points at a non-existent bundle, fix the Application Path. On Linux, make sure the executable is on `PATH` or supply an absolute path.
+- **Wrong terminal opens.** A previous selection is still in effect. Re-open Settings, change the dropdown, save again. The change is live -- no restart required.
+- **Custom terminal opens but the SSH command doesn't run.** The generic launcher passes `-e <command>` as argv. If your terminal uses a different flag (e.g. `--exec`), add a launcher strategy: register a function in `_LAUNCHERS` and append a catalog row in `_TERMINAL_CATALOGS` referencing that strategy id.
+- **`(not installed)` next to a terminal I just installed.** Connector probes paths at startup. After installing a new app, restart Connector (`./connector.sh --stop && ./connector.sh --start`) so the catalog is rescanned.
 
 ### Import and Export
 
@@ -746,7 +872,7 @@ mypy py_flask/
 
 ### Running Tests
 
-The test suite contains 188 tests across 7 test files:
+The test suite contains 195 tests across 7 test files:
 
 ```bash
 # Run the full suite
@@ -771,7 +897,7 @@ pytest --cov=py_flask --cov-report=term-missing
 | `test_crypto_service.py` | 11 | Key generation, permissions, encrypt/decrypt, error handling |
 | `test_storage.py` | 13 | CRUD operations over encrypted storage |
 | `test_settings_service.py` | 7 | Settings defaults, overrides, persistence |
-| `test_terminal_service.py` | 23 | Platform detection, SSH command building, sshpass, protocol command builders |
+| `test_terminal_service.py` | 30 | Platform detection, terminal catalog discovery, user-selectable terminal (`set_terminal`), SSH command building, sshpass, protocol command builders |
 | `test_routes.py` | 59 | Flask route integration (CRUD, protocols, export/import, SSH key browse) |
 | `test_folders.py` | 54 | Folder CRUD, subfolders, drag-and-drop move/reorder, sidebar rendering |
 

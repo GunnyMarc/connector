@@ -22,10 +22,13 @@ struct TestPlatformDetection {
         #expect(info.systemLabel == "macOS")
     }
 
-    @Test("Terminal is either iTerm or Terminal")
+    @Test("Default terminal is one of the catalog entries")
     func terminalDetection() {
         let info = TerminalService.detectPlatform()
-        #expect(info.terminal == "iTerm" || info.terminal == "Terminal")
+        let catalogNames = Set(info.availableTerminals.map(\.name))
+        // The default must be a known catalog entry, or — if absolutely
+        // nothing is installed — the hard fallback "Terminal".
+        #expect(catalogNames.contains(info.terminal) || info.terminal == "Terminal")
     }
 
     @Test("hasSshpass and hasExpect are booleans")
@@ -50,6 +53,75 @@ struct TestPlatformDetection {
         #expect(info.terminal == "Terminal")
         #expect(info.hasSshpass == false)
         #expect(info.hasExpect == true)
+        #expect(info.availableTerminals.isEmpty)
+    }
+}
+
+// MARK: - Terminal Discovery & Selection
+
+struct TestTerminalDiscovery {
+    @Test("discoverTerminals returns the expected catalog")
+    func discoverContainsKnownApps() {
+        let catalog = TerminalService.discoverTerminals()
+        let names = catalog.map(\.name)
+        #expect(names.contains("iTerm"))
+        #expect(names.contains("Ghostty"))
+        #expect(names.contains("Royal TSX"))
+        #expect(names.contains("Terminal"))
+    }
+
+    @Test("Terminal.app collapses to a single catalog entry")
+    func dedupTerminalApp() {
+        let catalog = TerminalService.discoverTerminals()
+        let count = catalog.filter { $0.name == "Terminal" }.count
+        #expect(count == 1)
+    }
+
+    @Test("Default selection is the first installed entry")
+    func defaultIsInstalled() {
+        let svc = TerminalService()
+        let installed = svc.platformInfo.availableTerminals.contains {
+            $0.installed
+        }
+        // If anything is installed, the selection must be installed.
+        if installed {
+            #expect(svc.selectedTerminal.installed)
+        }
+    }
+
+    @Test("setTerminal switches to a known catalog entry")
+    func setKnownTerminal() {
+        let svc = TerminalService()
+        svc.setTerminal(name: "Ghostty", path: "/Applications/Ghostty.app")
+        #expect(svc.selectedTerminal.name == "Ghostty")
+        #expect(svc.selectedTerminal.path == "/Applications/Ghostty.app")
+        #expect(svc.selectedTerminal.launcher == TerminalLauncher.ghostty)
+    }
+
+    @Test("setTerminal with empty path uses catalog default")
+    func setTerminalUsesCatalogPath() {
+        let svc = TerminalService()
+        svc.setTerminal(name: "iTerm", path: "")
+        #expect(svc.selectedTerminal.name == "iTerm")
+        #expect(svc.selectedTerminal.path == "/Applications/iTerm.app")
+        #expect(svc.selectedTerminal.launcher == TerminalLauncher.iTerm)
+    }
+
+    @Test("setTerminal with unknown name uses generic launcher")
+    func setUnknownTerminal() {
+        let svc = TerminalService()
+        svc.setTerminal(name: "MyCustomTerm", path: "/Applications/MyCustomTerm.app")
+        #expect(svc.selectedTerminal.name == "MyCustomTerm")
+        #expect(svc.selectedTerminal.launcher == TerminalLauncher.openGeneric)
+    }
+
+    @Test("setTerminal with empty name is a no-op")
+    func setEmptyNameNoOp() {
+        let svc = TerminalService()
+        let before = svc.selectedTerminal
+        svc.setTerminal(name: "", path: "")
+        #expect(svc.selectedTerminal.name == before.name)
+        #expect(svc.selectedTerminal.launcher == before.launcher)
     }
 }
 
